@@ -29,7 +29,8 @@ static VOID shell_help(VOID) {
 }
 
 static VOID shell_cls(EFI_SYSTEM_TABLE *SystemTable) {
-    SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
+    uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
+    uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
 }
 
 static VOID shell_halt(VOID) {
