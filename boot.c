@@ -26,6 +26,29 @@ static CHAR16 *skip_spaces(CHAR16 *s) {
     return s;
 }
 
+static CHAR16 *mem_type_name(UINT32 type) {
+    switch (type) {
+        case EfiReservedMemoryType:      return L"Reserved";
+        case EfiLoaderCode:              return L"LoaderCode";
+        case EfiLoaderData:              return L"LoaderData";
+        case EfiBootServicesCode:        return L"BootSvcCode";
+        case EfiBootServicesData:        return L"BootSvcData";
+        case EfiRuntimeServicesCode:     return L"RtSvcCode";
+        case EfiRuntimeServicesData:     return L"RtSvcData";
+        case EfiConventionalMemory:      return L"Conventional";
+        case EfiUnusableMemory:          return L"Unusable";
+        case EfiACPIReclaimMemory:       return L"ACPIReclaim";
+        case EfiACPIMemoryNVS:           return L"ACPINVS";
+        case EfiMemoryMappedIO:          return L"MMIO";
+        case EfiMemoryMappedIOPortSpace: return L"MMIOPort";
+        case EfiPalCode:                 return L"PalCode";
+#ifdef EfiPersistentMemory
+        case EfiPersistentMemory:        return L"Persistent";
+#endif
+        default:                         return L"Unknown";
+    }
+}
+
 static EFI_STATUS open_root(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, EFI_FILE_HANDLE *root) {
     EFI_LOADED_IMAGE *loaded_image;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
@@ -55,6 +78,7 @@ static VOID shell_help(VOID) {
     Print(L"  list [PATH]        - list directory or file info\r\n");
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
+    Print(L"  memmap             - show UEFI memory map\r\n");
     Print(L"  halt               - stop here forever\r\n");
 }
 
@@ -68,6 +92,75 @@ static VOID shell_halt(VOID) {
     for (;;) {
         __asm__ __volatile__("hlt");
     }
+}
+
+static VOID shell_memmap(EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_STATUS status;
+    EFI_MEMORY_DESCRIPTOR *map = NULL;
+    EFI_MEMORY_DESCRIPTOR *desc;
+    UINTN map_size = 0;
+    UINTN map_key = 0;
+    UINTN desc_size = 0;
+    UINT32 desc_version = 0;
+    UINTN i, count;
+    UINT64 total_pages = 0;
+    UINT64 total_bytes = 0;
+
+    status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap, 5,
+                               &map_size, map, &map_key, &desc_size, &desc_version);
+
+    if (status != EFI_BUFFER_TOO_SMALL) {
+        Print(L"\r\nGetMemoryMap probe failed: %r", status);
+        return;
+    }
+
+    map_size += desc_size * 8;
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, map_size, (VOID **)&map);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nAllocatePool failed: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap, 5,
+                               &map_size, map, &map_key, &desc_size, &desc_version);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nGetMemoryMap failed: %r", status);
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, map);
+        return;
+    }
+
+    count = map_size / desc_size;
+
+    Print(L"\r\nMemory map:");
+    Print(L"\r\nIdx  Type           Pages        Start            End");
+
+    for (i = 0; i < count; i++) {
+        UINT64 start;
+        UINT64 end;
+
+        desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)map + (i * desc_size));
+        start = desc->PhysicalStart;
+        end   = desc->PhysicalStart + (desc->NumberOfPages * 4096ULL) - 1;
+
+        Print(L"\r\n%3d  %-13s %8lx  %012lx  %012lx",
+              i,
+              mem_type_name(desc->Type),
+              desc->NumberOfPages,
+              start,
+              end);
+
+        total_pages += desc->NumberOfPages;
+    }
+
+    total_bytes = total_pages * 4096ULL;
+
+    Print(L"\r\n\r\nDescriptors : %d", count);
+    Print(L"\r\nTotal pages  : %lx", total_pages);
+    Print(L"\r\nTotal bytes  : %lx", total_bytes);
+
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, map);
 }
 
 static VOID print_file_info_line(EFI_FILE_INFO *info) {
@@ -263,6 +356,11 @@ static VOID execute_command(CHAR16 *line, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
 
     if (str_eq(line, L"halt")) {
         shell_halt();
+        return;
+    }
+
+    if (str_eq(line, L"memmap")) {
+        shell_memmap(SystemTable);
         return;
     }
 
