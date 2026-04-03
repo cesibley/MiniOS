@@ -2,6 +2,7 @@
 #include <efilib.h>
 
 #define INPUT_MAX 256
+#define FILE_CHUNK 128
 
 static VOID print_prompt(VOID) {
     Print(L"\r\nMiniOS> ");
@@ -20,12 +21,41 @@ static INTN starts_with(CHAR16 *s, CHAR16 *prefix) {
     return 1;
 }
 
+static CHAR16 *skip_spaces(CHAR16 *s) {
+    while (*s == L' ') s++;
+    return s;
+}
+
+static EFI_STATUS open_root(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, EFI_FILE_HANDLE *root) {
+    EFI_LOADED_IMAGE *loaded_image;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
+    EFI_STATUS status;
+
+    status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+                               ImageHandle, &LoadedImageProtocol, (VOID **)&loaded_image);
+    if (EFI_ERROR(status)) {
+        return status;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+                               loaded_image->DeviceHandle, &FileSystemProtocol, (VOID **)&fs);
+    if (EFI_ERROR(status)) {
+        return status;
+    }
+
+    status = uefi_call_wrapper(fs->OpenVolume, 2, fs, root);
+    return status;
+}
+
 static VOID shell_help(VOID) {
     Print(L"\r\nCommands:\r\n");
-    Print(L"  help        - show this help\r\n");
-    Print(L"  cls         - clear screen\r\n");
-    Print(L"  echo TEXT   - print TEXT\r\n");
-    Print(L"  halt        - stop here forever\r\n");
+    Print(L"  help               - show this help\r\n");
+    Print(L"  cls                - clear screen\r\n");
+    Print(L"  echo TEXT          - print TEXT\r\n");
+    Print(L"  list [PATH]        - list directory or file info\r\n");
+    Print(L"  read FILE          - print FILE contents\r\n");
+    Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
+    Print(L"  halt               - stop here forever\r\n");
 }
 
 static VOID shell_cls(EFI_SYSTEM_TABLE *SystemTable) {
@@ -40,8 +70,182 @@ static VOID shell_halt(VOID) {
     }
 }
 
-static VOID execute_command(CHAR16 *line, EFI_SYSTEM_TABLE *SystemTable) {
-    while (*line == L' ') line++;
+static VOID print_file_info_line(EFI_FILE_INFO *info) {
+    if (info->Attribute & EFI_FILE_DIRECTORY) {
+        Print(L"\r\n<DIR>      %s", info->FileName);
+    } else {
+        Print(L"\r\n%10lu %s", info->FileSize, info->FileName);
+    }
+}
+
+static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE handle;
+    EFI_STATUS status;
+    UINT8 info_buf[1024];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN size;
+    CHAR16 *target = path;
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    if (target == NULL || *target == 0) {
+        handle = root;
+    } else {
+        status = uefi_call_wrapper(root->Open, 5, root, &handle, target, EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nFailed to open '%s': %r", target, status);
+            uefi_call_wrapper(root->Close, 1, root);
+            return;
+        }
+    }
+
+    size = sizeof(info_buf);
+    status = uefi_call_wrapper(handle->GetInfo, 4, handle, &GenericFileInfo, &size, info);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to get info: %r", status);
+        if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
+        print_file_info_line(info);
+        if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(handle->SetPosition, 2, handle, 0);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to read directory: %r", status);
+        if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    while (1) {
+        size = sizeof(info_buf);
+        status = uefi_call_wrapper(handle->Read, 3, handle, &size, info);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nDirectory read error: %r", status);
+            break;
+        }
+        if (size == 0) {
+            break;
+        }
+        print_file_info_line(info);
+    }
+
+    if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
+static VOID shell_read_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE file;
+    EFI_STATUS status;
+    CHAR8 chunk[FILE_CHUNK + 1];
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open '%s': %r", path, status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    Print(L"\r\n");
+    while (1) {
+        UINTN size = FILE_CHUNK;
+        UINTN i;
+
+        status = uefi_call_wrapper(file->Read, 3, file, &size, chunk);
+        if (EFI_ERROR(status) || size == 0) {
+            break;
+        }
+
+        chunk[size] = 0;
+        for (i = 0; i < size; i++) {
+            Print(L"%c", chunk[i]);
+        }
+    }
+
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nRead error: %r", status);
+    }
+
+    uefi_call_wrapper(file->Close, 1, file);
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
+static VOID shell_write_file(CHAR16 *path, CHAR16 *text, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE file;
+    EFI_STATUS status;
+    CHAR8 out[INPUT_MAX];
+    UINTN len = 0;
+
+    while (text[len] && len < (INPUT_MAX - 1)) {
+        out[len] = (CHAR8)(text[len] & 0xFF);
+        len++;
+    }
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (!EFI_ERROR(status)) {
+        status = uefi_call_wrapper(file->Delete, 1, file);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nFailed to replace '%s': %r", path, status);
+            uefi_call_wrapper(root->Close, 1, root);
+            return;
+        }
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                               0);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to create '%s': %r", path, status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(file->Write, 3, file, &len, out);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nWrite failed: %r", status);
+    } else {
+        status = uefi_call_wrapper(file->Flush, 1, file);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nWrite completed but flush failed: %r", status);
+        } else {
+            Print(L"\r\nWrote %d bytes to '%s'", len, path);
+        }
+    }
+
+    uefi_call_wrapper(file->Close, 1, file);
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
+static VOID execute_command(CHAR16 *line, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    CHAR16 *arg;
+
+    line = skip_spaces(line);
 
     if (*line == 0) {
         return;
@@ -64,6 +268,55 @@ static VOID execute_command(CHAR16 *line, EFI_SYSTEM_TABLE *SystemTable) {
 
     if (starts_with(line, L"echo ")) {
         Print(L"\r\n%s", line + 5);
+        return;
+    }
+
+    if (starts_with(line, L"read ")) {
+        arg = skip_spaces(line + 5);
+        if (*arg == 0) {
+            Print(L"\r\nUsage: read FILE");
+            return;
+        }
+        shell_read_file(arg, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (str_eq(line, L"list")) {
+        shell_list_path(NULL, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (starts_with(line, L"list ")) {
+        arg = skip_spaces(line + 5);
+        shell_list_path(arg, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (starts_with(line, L"write ")) {
+        CHAR16 *path;
+        CHAR16 *text;
+
+        arg = skip_spaces(line + 6);
+        if (*arg == 0) {
+            Print(L"\r\nUsage: write FILE TEXT");
+            return;
+        }
+
+        path = arg;
+        while (*arg && *arg != L' ') arg++;
+        if (*arg == 0) {
+            Print(L"\r\nUsage: write FILE TEXT");
+            return;
+        }
+
+        *arg = 0;
+        text = skip_spaces(arg + 1);
+        if (*text == 0) {
+            Print(L"\r\nUsage: write FILE TEXT");
+            return;
+        }
+
+        shell_write_file(path, text, ImageHandle, SystemTable);
         return;
     }
 
@@ -123,7 +376,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         line[0] = 0;
         print_prompt();
         read_line(SystemTable, line, INPUT_MAX);
-        execute_command(line, SystemTable);
+        execute_command(line, ImageHandle, SystemTable);
     }
 
     return EFI_SUCCESS;
