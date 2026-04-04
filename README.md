@@ -18,6 +18,9 @@ make
 
 The build outputs `BOOTX64.EFI` in the repo root.
 It also builds `PIX64.EFI`, a standalone UEFI app that computes π digits with a spigot algorithm.
+It also builds `GFXTEST.EFI`, a standalone UEFI app that queries GOP modes and draws color bars.
+It also builds `CLOCKX64.EFI`, a standalone UEFI app that prints the current UEFI clock time.
+It also builds `HEXVIEW.EFI`, a standalone UEFI app that prints a hex/ASCII view of a file.
 
 ## Build only the PI app
 
@@ -52,6 +55,9 @@ mkfs.vfat esp.img
 mmd -i esp.img ::/EFI ::/EFI/BOOT
 mcopy -i esp.img BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i esp.img PIX64.EFI ::/EFI/BOOT/PIX64.EFI
+mcopy -i esp.img GFXTEST.EFI ::/EFI/BOOT/GFXTEST.EFI
+mcopy -i esp.img CLOCKX64.EFI ::/EFI/BOOT/CLOCKX64.EFI
+mcopy -i esp.img HEXVIEW.EFI ::/EFI/BOOT/HEXVIEW.EFI
 ```
 
 ### 2) Create and configure a VM in VirtualBox
@@ -78,6 +84,24 @@ From the MiniOS shell, launch the PI program with:
 
 ```text
 run PIX64.EFI
+```
+
+To launch the graphics demo:
+
+```text
+run GFXTEST.EFI
+```
+
+To launch the clock demo:
+
+```text
+run CLOCKX64.EFI
+```
+
+To launch the hex viewer:
+
+```text
+run HEXVIEW.EFI
 ```
 
 ## Troubleshooting

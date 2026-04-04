@@ -240,10 +240,16 @@ static VOID shell_meminfo(EFI_SYSTEM_TABLE *SystemTable) {
 }
 
 static VOID print_file_info_line(EFI_FILE_INFO *info) {
+    EFI_TIME *modified = &info->ModificationTime;
     if (info->Attribute & EFI_FILE_DIRECTORY) {
-        Print(L"\r\n<DIR>      %s", info->FileName);
+        Print(L"\r\n<DIR>      %04d-%02d-%02d %02d:%02d %s",
+              modified->Year, modified->Month, modified->Day,
+              modified->Hour, modified->Minute, info->FileName);
     } else {
-        Print(L"\r\n%10lu %s", info->FileSize, info->FileName);
+        Print(L"\r\n%10lu %04d-%02d-%02d %02d:%02d %s",
+              info->FileSize,
+              modified->Year, modified->Month, modified->Day,
+              modified->Hour, modified->Minute, info->FileName);
     }
 }
 
