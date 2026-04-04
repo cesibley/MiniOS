@@ -16,9 +16,13 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `help` — show the built-in command list.
 - `cls` — clear the screen and reset cursor position.
 - `echo TEXT` — print `TEXT` exactly as entered.
+- `cd [PATH]` — change the current working directory (uses `\` root by default).
 - `list [PATH]` — list entries for a directory, or metadata for a file path.
 - `read FILE` — display the contents of `FILE`.
 - `write FILE TEXT` — overwrite `FILE` with `TEXT`.
+- `del FILE` — delete a file.
+- `mkdir DIR` — create a directory.
+- `rmdir DIR` — remove an empty directory.
 - `memmap` — print the full UEFI memory map descriptors.
 - `meminfo` — print memory totals grouped by UEFI memory type.
 - `run EFI_FILE` — load and execute another EFI application.

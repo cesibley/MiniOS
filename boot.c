@@ -26,6 +26,75 @@ static CHAR16 *skip_spaces(CHAR16 *s) {
     return s;
 }
 
+static INTN is_path_sep(CHAR16 c) {
+    return c == L'\\' || c == L'/';
+}
+
+static VOID resolve_path(CHAR16 *cwd, CHAR16 *input, CHAR16 *out, UINTN out_len) {
+    CHAR16 working[INPUT_MAX];
+    CHAR16 *segments[INPUT_MAX / 2];
+    UINTN seg_count = 0;
+    UINTN i = 0;
+
+    if (out_len == 0) return;
+    out[0] = 0;
+
+    if (input == NULL || *input == 0) {
+        StrnCpy(out, cwd, out_len - 1);
+        out[out_len - 1] = 0;
+        return;
+    }
+
+    if (is_path_sep(input[0])) {
+        StrnCpy(working, input, INPUT_MAX - 1);
+    } else {
+        SPrint(working, sizeof(working), L"%s\\%s", cwd, input);
+    }
+    working[INPUT_MAX - 1] = 0;
+
+    while (working[i] != 0 && seg_count < (INPUT_MAX / 2)) {
+        CHAR16 *start;
+        UINTN j;
+
+        while (is_path_sep(working[i])) i++;
+        if (working[i] == 0) break;
+        start = &working[i];
+        j = i;
+        while (working[j] != 0 && !is_path_sep(working[j])) j++;
+        if (working[j] != 0) {
+            working[j] = 0;
+            i = j + 1;
+        } else {
+            i = j;
+        }
+
+        if (StrCmp(start, L".") == 0) {
+            continue;
+        }
+        if (StrCmp(start, L"..") == 0) {
+            if (seg_count > 0) seg_count--;
+            continue;
+        }
+        segments[seg_count++] = start;
+    }
+
+    if (seg_count == 0) {
+        StrnCpy(out, L"\\", out_len - 1);
+        out[out_len - 1] = 0;
+        return;
+    }
+
+    out[0] = L'\\';
+    out[1] = 0;
+    for (i = 0; i < seg_count; i++) {
+        if (StrLen(out) + StrLen(segments[i]) + 2 >= out_len) {
+            break;
+        }
+        if (i > 0 || out[1] != 0) StrCat(out, L"\\");
+        StrCat(out, segments[i]);
+    }
+}
+
 static CHAR16 *mem_type_name(UINT32 type) {
     switch (type) {
         case EfiReservedMemoryType:      return L"Reserved";
@@ -75,9 +144,13 @@ static VOID shell_help(VOID) {
     Print(L"  help               - show this help\r\n");
     Print(L"  cls                - clear screen\r\n");
     Print(L"  echo TEXT          - print TEXT\r\n");
+    Print(L"  cd [PATH]          - change current directory\r\n");
     Print(L"  list [PATH]        - list directory or file info\r\n");
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
+    Print(L"  del FILE           - delete a file\r\n");
+    Print(L"  mkdir DIR          - create a directory\r\n");
+    Print(L"  rmdir DIR          - remove an empty directory\r\n");
     Print(L"  memmap             - show UEFI memory map\r\n");
     Print(L"  meminfo            - summarize UEFI memory by type\r\n");
     Print(L"  run EFI_FILE       - load + start another EFI application\r\n");
@@ -320,6 +393,45 @@ static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
     uefi_call_wrapper(root->Close, 1, root);
 }
 
+static VOID shell_cd(CHAR16 *cwd, CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE handle;
+    EFI_STATUS status;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN size = sizeof(info_buf);
+    CHAR16 target[INPUT_MAX];
+
+    resolve_path(cwd, path, target, INPUT_MAX);
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &handle, target, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nCannot open '%s': %r", target, status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(handle->GetInfo, 4, handle, &GenericFileInfo, &size, info);
+    if (EFI_ERROR(status) || !(info->Attribute & EFI_FILE_DIRECTORY)) {
+        Print(L"\r\nNot a directory: %s", target);
+        uefi_call_wrapper(handle->Close, 1, handle);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    StrnCpy(cwd, target, INPUT_MAX - 1);
+    cwd[INPUT_MAX - 1] = 0;
+
+    uefi_call_wrapper(handle->Close, 1, handle);
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
 static VOID shell_read_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_FILE_HANDLE root;
     EFI_FILE_HANDLE file;
@@ -417,6 +529,87 @@ static VOID shell_write_file(CHAR16 *path, CHAR16 *text, EFI_HANDLE ImageHandle,
     uefi_call_wrapper(root->Close, 1, root);
 }
 
+static VOID shell_delete_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE file;
+    EFI_STATUS status;
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open '%s': %r", path, status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(file->Delete, 1, file);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nDelete failed: %r", status);
+    } else {
+        Print(L"\r\nDeleted '%s'", path);
+    }
+
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
+static VOID shell_mkdir(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE dir;
+    EFI_STATUS status;
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &dir, path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                               EFI_FILE_DIRECTORY);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nmkdir failed for '%s': %r", path, status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    Print(L"\r\nCreated directory '%s'", path);
+    uefi_call_wrapper(dir->Close, 1, dir);
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
+static VOID shell_rmdir(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE dir;
+    EFI_STATUS status;
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &dir, path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open '%s': %r", path, status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(dir->Delete, 1, dir);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nrmdir failed: %r", status);
+    } else {
+        Print(L"\r\nRemoved directory '%s'", path);
+    }
+
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
 static VOID shell_run_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_FILE_HANDLE root;
     EFI_FILE_HANDLE file;
@@ -505,8 +698,9 @@ cleanup:
     uefi_call_wrapper(root->Close, 1, root);
 }
 
-static VOID execute_command(CHAR16 *line, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     CHAR16 *arg;
+    CHAR16 resolved[INPUT_MAX];
 
     line = skip_spaces(line);
 
@@ -555,18 +749,35 @@ static VOID execute_command(CHAR16 *line, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
             Print(L"\r\nUsage: read FILE");
             return;
         }
-        shell_read_file(arg, ImageHandle, SystemTable);
+        resolve_path(cwd, arg, resolved, INPUT_MAX);
+        shell_read_file(resolved, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (str_eq(line, L"cd")) {
+        shell_cd(cwd, L"\\", ImageHandle, SystemTable);
+        return;
+    }
+
+    if (starts_with(line, L"cd ")) {
+        arg = skip_spaces(line + 3);
+        if (*arg == 0) {
+            Print(L"\r\nUsage: cd [PATH]");
+            return;
+        }
+        shell_cd(cwd, arg, ImageHandle, SystemTable);
         return;
     }
 
     if (str_eq(line, L"list")) {
-        shell_list_path(NULL, ImageHandle, SystemTable);
+        shell_list_path(cwd, ImageHandle, SystemTable);
         return;
     }
 
     if (starts_with(line, L"list ")) {
         arg = skip_spaces(line + 5);
-        shell_list_path(arg, ImageHandle, SystemTable);
+        resolve_path(cwd, arg, resolved, INPUT_MAX);
+        shell_list_path(resolved, ImageHandle, SystemTable);
         return;
     }
 
@@ -594,7 +805,41 @@ static VOID execute_command(CHAR16 *line, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
             return;
         }
 
-        shell_write_file(path, text, ImageHandle, SystemTable);
+        resolve_path(cwd, path, resolved, INPUT_MAX);
+        shell_write_file(resolved, text, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (starts_with(line, L"del ")) {
+        arg = skip_spaces(line + 4);
+        if (*arg == 0) {
+            Print(L"\r\nUsage: del FILE");
+            return;
+        }
+        resolve_path(cwd, arg, resolved, INPUT_MAX);
+        shell_delete_file(resolved, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (starts_with(line, L"mkdir ")) {
+        arg = skip_spaces(line + 6);
+        if (*arg == 0) {
+            Print(L"\r\nUsage: mkdir DIR");
+            return;
+        }
+        resolve_path(cwd, arg, resolved, INPUT_MAX);
+        shell_mkdir(resolved, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (starts_with(line, L"rmdir ")) {
+        arg = skip_spaces(line + 6);
+        if (*arg == 0) {
+            Print(L"\r\nUsage: rmdir DIR");
+            return;
+        }
+        resolve_path(cwd, arg, resolved, INPUT_MAX);
+        shell_rmdir(resolved, ImageHandle, SystemTable);
         return;
     }
 
@@ -604,7 +849,8 @@ static VOID execute_command(CHAR16 *line, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
             Print(L"\r\nUsage: run EFI_FILE");
             return;
         }
-        shell_run_file(arg, ImageHandle, SystemTable);
+        resolve_path(cwd, arg, resolved, INPUT_MAX);
+        shell_run_file(resolved, ImageHandle, SystemTable);
         return;
     }
 
@@ -653,18 +899,20 @@ static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     CHAR16 line[INPUT_MAX];
+    CHAR16 cwd[INPUT_MAX];
 
     InitializeLib(ImageHandle, SystemTable);
     shell_cls(SystemTable);
 
     Print(L"MiniOS UEFI shell\r\n");
     Print(L"Type 'help' for commands.\r\n");
+    StrCpy(cwd, L"\\");
 
     while (1) {
         line[0] = 0;
         print_prompt();
         read_line(SystemTable, line, INPUT_MAX);
-        execute_command(line, ImageHandle, SystemTable);
+        execute_command(line, cwd, ImageHandle, SystemTable);
     }
 
     return EFI_SUCCESS;
