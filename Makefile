@@ -34,8 +34,11 @@ CLOCK_OBJECTS := clock.o
 HEX_TARGET := HEXVIEW.EFI
 HEX_INTERMED := hexview.so
 HEX_OBJECTS := hexview.o
+EDIT_TARGET := TEXTEDIT.EFI
+EDIT_INTERMED := textedit.so
+EDIT_OBJECTS := textedit.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET)
+all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -55,13 +58,20 @@ $(TARGET): $(INTERMED)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	mkdir -p iso_root/EFI/BOOT
+	cp -f $@ iso_root/$@
+	cp -f $@ iso_root/EFI/BOOT/$@
 
 clean:
 	rm -f $(OBJECTS) $(INTERMED) $(TARGET) \
 	      $(PI_OBJECTS) $(PI_INTERMED) $(PI_TARGET) \
 	      $(GFX_OBJECTS) $(GFX_INTERMED) $(GFX_TARGET) \
 	      $(CLOCK_OBJECTS) $(CLOCK_INTERMED) $(CLOCK_TARGET) \
-	      $(HEX_OBJECTS) $(HEX_INTERMED) $(HEX_TARGET)
+	      $(HEX_OBJECTS) $(HEX_INTERMED) $(HEX_TARGET) \
+	      $(EDIT_OBJECTS) $(EDIT_INTERMED) $(EDIT_TARGET) \
+	      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
+	      iso_root/$(CLOCK_TARGET) iso_root/$(HEX_TARGET) iso_root/$(EDIT_TARGET) \
+	      iso_root/EFI/BOOT/$(TARGET)
 
 run-info:
 	@echo "Copy $(TARGET) to:"
@@ -74,6 +84,8 @@ run-info:
 	@echo "  EFI/BOOT/CLOCKX64.EFI"
 	@echo "Optional hex viewer:"
 	@echo "  EFI/BOOT/HEXVIEW.EFI"
+	@echo "Optional text editor:"
+	@echo "  EFI/BOOT/TEXTEDIT.EFI"
 
 pi.o: pi.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -86,6 +98,7 @@ $(PI_TARGET): $(PI_INTERMED)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
 
 gfxtest.o: gfxtest.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -98,6 +111,7 @@ $(GFX_TARGET): $(GFX_INTERMED)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
 
 clock.o: clock.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -110,6 +124,7 @@ $(CLOCK_TARGET): $(CLOCK_INTERMED)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
 
 hexview.o: hexview.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -122,5 +137,19 @@ $(HEX_TARGET): $(HEX_INTERMED)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
+
+textedit.o: textedit.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(EDIT_INTERMED): $(EDIT_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(EDIT_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(EDIT_TARGET): $(EDIT_INTERMED)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
 
 .PHONY: all clean check run-info

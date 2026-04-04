@@ -35,6 +35,7 @@ The current build also produces standalone UEFI utilities:
 - `GFXTEST.EFI` — queries GOP modes and draws color bars
 - `CLOCKX64.EFI` — prints the current UEFI clock time
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
+- `TEXTEDIT.EFI` — full-screen text-mode editor for plain text files
 
 ## Latest project configuration
 
@@ -74,6 +75,9 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `GFXTEST.EFI`
 - `CLOCKX64.EFI`
 - `HEXVIEW.EFI`
+- `TEXTEDIT.EFI`
+
+`TEXTEDIT.EFI` is also copied into `iso_root/` during its build rule so it is immediately runnable in the QEMU FAT drive layout.
 
 ## Run with the current QEMU configuration
 
@@ -89,6 +93,7 @@ run PIX64.EFI
 run GFXTEST.EFI
 run CLOCKX64.EFI
 run HEXVIEW.EFI
+run TEXTEDIT.EFI
 ```
 
 ## Build only one app

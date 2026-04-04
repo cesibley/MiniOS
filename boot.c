@@ -612,68 +612,26 @@ static VOID shell_rmdir(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *
 }
 
 static VOID shell_run_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
-    EFI_FILE_HANDLE root;
-    EFI_FILE_HANDLE file;
+    EFI_LOADED_IMAGE *loaded_image;
+    EFI_DEVICE_PATH_PROTOCOL *file_path = NULL;
     EFI_STATUS status;
     EFI_HANDLE new_image = NULL;
-    EFI_FILE_INFO *info = NULL;
-    UINTN info_size = SIZE_OF_EFI_FILE_INFO + 512;
-    VOID *image_buffer = NULL;
-    UINTN image_size = 0;
 
-    status = open_root(ImageHandle, SystemTable, &root);
+    status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+                               ImageHandle, &LoadedImageProtocol, (VOID **)&loaded_image);
     if (EFI_ERROR(status)) {
-        Print(L"\r\nFailed to open filesystem: %r", status);
+        Print(L"\r\nFailed to get loaded image protocol: %r", status);
         return;
     }
 
-    status = uefi_call_wrapper(root->Open, 5, root, &file, path, EFI_FILE_MODE_READ, 0);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nFailed to open '%s': %r", path, status);
-        uefi_call_wrapper(root->Close, 1, root);
+    file_path = FileDevicePath(loaded_image->DeviceHandle, path);
+    if (file_path == NULL) {
+        Print(L"\r\nFailed to build device path for '%s'", path);
         return;
-    }
-
-    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
-                               EfiLoaderData, info_size, (VOID **)&info);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nAllocatePool for file info failed: %r", status);
-        goto cleanup;
-    }
-
-    status = uefi_call_wrapper(file->GetInfo, 4, file, &GenericFileInfo, &info_size, info);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nFailed to get file info for '%s': %r", path, status);
-        goto cleanup;
-    }
-
-    image_size = (UINTN)info->FileSize;
-    if (image_size == 0) {
-        Print(L"\r\n'%s' is empty.", path);
-        goto cleanup;
-    }
-
-    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
-                               EfiLoaderData, image_size, &image_buffer);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nAllocatePool for image failed: %r", status);
-        goto cleanup;
-    }
-
-    status = uefi_call_wrapper(file->SetPosition, 2, file, 0);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nFailed to seek '%s': %r", path, status);
-        goto cleanup;
-    }
-
-    status = uefi_call_wrapper(file->Read, 3, file, &image_size, image_buffer);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nFailed to read '%s': %r", path, status);
-        goto cleanup;
     }
 
     status = uefi_call_wrapper(SystemTable->BootServices->LoadImage, 6,
-                               FALSE, ImageHandle, NULL, image_buffer, image_size, &new_image);
+                               FALSE, ImageHandle, file_path, NULL, 0, &new_image);
     if (EFI_ERROR(status)) {
         Print(L"\r\nLoadImage failed for '%s': %r", path, status);
         goto cleanup;
@@ -689,14 +647,9 @@ static VOID shell_run_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABL
     }
 
 cleanup:
-    if (image_buffer != NULL) {
-        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, image_buffer);
+    if (file_path != NULL) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, file_path);
     }
-    if (info != NULL) {
-        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, info);
-    }
-    uefi_call_wrapper(file->Close, 1, file);
-    uefi_call_wrapper(root->Close, 1, root);
 }
 
 static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
