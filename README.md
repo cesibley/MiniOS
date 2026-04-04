@@ -1,111 +1,107 @@
 # MiniOS (UEFI)
 
-This project builds a tiny **x86_64 UEFI application** (`BOOTX64.EFI`) that prints:
+MiniOS is a tiny **x86_64 UEFI playground** built with `gnu-efi`.
 
-`MiniOS UEFI booted successfully!`
+The default app (`BOOTX64.EFI`) starts an interactive MiniOS UEFI shell.
 
-and then halts in an infinite loop.
+On startup it prints:
 
-## Build
+`MiniOS UEFI shell`
 
-On Debian/Ubuntu:
+and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
+(e.g. `list`, `read`, `write`, `memmap`, `meminfo`, `run`, `reboot`, `halt`).
+
+### Built-in shell commands
+
+- `help` — show the built-in command list.
+- `cls` — clear the screen and reset cursor position.
+- `echo TEXT` — print `TEXT` exactly as entered.
+- `list [PATH]` — list entries for a directory, or metadata for a file path.
+- `read FILE` — display the contents of `FILE`.
+- `write FILE TEXT` — overwrite `FILE` with `TEXT`.
+- `memmap` — print the full UEFI memory map descriptors.
+- `meminfo` — print memory totals grouped by UEFI memory type.
+- `run EFI_FILE` — load and execute another EFI application.
+- `reboot` — reboot the machine via UEFI `ResetSystem`.
+- `halt` — print a halt message and stop execution in an infinite loop.
+
+The current build also produces standalone UEFI utilities:
+
+- `PIX64.EFI` — computes π digits with a spigot algorithm
+- `GFXTEST.EFI` — queries GOP modes and draws color bars
+- `CLOCKX64.EFI` — prints the current UEFI clock time
+- `HEXVIEW.EFI` — prints a hex/ASCII view of a file
+
+## Latest project configuration
+
+The repo is currently configured to:
+
+- build all EFI binaries with `make`
+- stage runnable EFI files in `iso_root/`
+- boot with QEMU + OVMF using `./StartMiniOS`
+
+`StartMiniOS` currently runs:
+
+```bash
+qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -drive file=fat:rw:iso_root,format=raw
+```
+
+So QEMU mounts `iso_root` as a writable FAT drive and OVMF loads the UEFI programs from there.
+
+## Requirements (Debian/Ubuntu)
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential gnu-efi mtools
+sudo apt install -y build-essential gnu-efi qemu-system-x86 ovmf mtools
+```
+
+## Build
+
+From the repo root:
+
+```bash
 make
 ```
 
-The build outputs `BOOTX64.EFI` in the repo root.
-It also builds `PIX64.EFI`, a standalone UEFI app that computes π digits with a spigot algorithm.
-It also builds `GFXTEST.EFI`, a standalone UEFI app that queries GOP modes and draws color bars.
-It also builds `CLOCKX64.EFI`, a standalone UEFI app that prints the current UEFI clock time.
-It also builds `HEXVIEW.EFI`, a standalone UEFI app that prints a hex/ASCII view of a file.
+This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and then builds:
 
-## Build only the PI app
+- `BOOTX64.EFI`
+- `PIX64.EFI`
+- `GFXTEST.EFI`
+- `CLOCKX64.EFI`
+- `HEXVIEW.EFI`
 
-If you only want the PI calculator:
+## Run with the current QEMU configuration
+
+```bash
+./StartMiniOS
+```
+
+Inside the UEFI shell, run apps such as:
+
+```text
+run BOOTX64.EFI
+run PIX64.EFI
+run GFXTEST.EFI
+run CLOCKX64.EFI
+run HEXVIEW.EFI
+```
+
+## Build only one app
+
+Example for PI:
 
 ```bash
 make check
 make PIX64.EFI
 ```
 
-### What the PI app does
+## Optional: VirtualBox flow
 
-- Prompts for decimal places (1-5000)
-- Computes π using an integer spigot algorithm
-- Prints `3.` followed by the requested digits
-
-## Boot in VirtualBox (UEFI mode)
-
-### 1) Create a FAT EFI disk image containing `EFI/BOOT/BOOTX64.EFI`
-
-From the repo root:
-
-```bash
-# Build first
-make
-
-# Create a small FAT image (64 MiB)
-truncate -s 64M esp.img
-mkfs.vfat esp.img
-
-# Create UEFI fallback path inside image and copy bootloader
-mmd -i esp.img ::/EFI ::/EFI/BOOT
-mcopy -i esp.img BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
-mcopy -i esp.img PIX64.EFI ::/EFI/BOOT/PIX64.EFI
-mcopy -i esp.img GFXTEST.EFI ::/EFI/BOOT/GFXTEST.EFI
-mcopy -i esp.img CLOCKX64.EFI ::/EFI/BOOT/CLOCKX64.EFI
-mcopy -i esp.img HEXVIEW.EFI ::/EFI/BOOT/HEXVIEW.EFI
-```
-
-### 2) Create and configure a VM in VirtualBox
-
-- **Type**: Other
-- **Version**: Other/Unknown (64-bit)
-- **RAM**: 256 MB+ is enough
-- **Disk**: use an existing disk and select `esp.img`
-
-Then run these commands to force firmware + storage defaults that work well for UEFI testing:
-
-```bash
-VBoxManage modifyvm "MiniOS" --firmware efi
-VBoxManage storagectl "MiniOS" --name "SATA" --add sata --controller IntelAhci
-VBoxManage storageattach "MiniOS" --storagectl "SATA" --port 0 --device 0 \
-  --type hdd --medium "$(pwd)/esp.img"
-```
-
-### 3) Boot
-
-Start the VM. UEFI should automatically load `EFI/BOOT/BOOTX64.EFI` and print the message.
-
-From the MiniOS shell, launch the PI program with:
-
-```text
-run PIX64.EFI
-```
-
-To launch the graphics demo:
-
-```text
-run GFXTEST.EFI
-```
-
-To launch the clock demo:
-
-```text
-run CLOCKX64.EFI
-```
-
-To launch the hex viewer:
-
-```text
-run HEXVIEW.EFI
-```
+If you prefer VirtualBox, create a FAT image and copy `BOOTX64.EFI` to `EFI/BOOT/BOOTX64.EFI` as fallback.
 
 ## Troubleshooting
 
-- If build fails with missing `elf_x86_64_efi.lds`, `crt0-efi-x86_64.o`, or `libefi`/`libgnuefi`, install the `gnu-efi` development package.
-- If the VM does not boot your file, verify the exact fallback path is `EFI/BOOT/BOOTX64.EFI`.
-- If Secure Boot is enabled in your VM firmware, disable it for this unsigned test binary.
+- Missing `elf_x86_64_efi.lds`, `crt0-efi-x86_64.o`, `libefi.a`, or `libgnuefi.a` means `gnu-efi` is not fully installed.
+- If QEMU cannot find `/usr/share/ovmf/OVMF.fd`, install the `ovmf` package (or update `StartMiniOS` to your local firmware path).
+- If UEFI does not auto-run your target, launch it manually from the shell with `run <APP>.EFI`.
