@@ -309,12 +309,8 @@ static VOID editor_draw_status(editor_t *ed) {
     }
 }
 
-static VOID editor_refresh(editor_t *ed) {
+static VOID editor_place_cursor(editor_t *ed) {
     UINTN text_rows = (ed->screen_rows > 0) ? ed->screen_rows - 1 : 0;
-
-    editor_scroll(ed);
-    editor_draw_rows(ed);
-    editor_draw_status(ed);
 
     if (ed->cy >= ed->row_off && ed->cy < ed->row_off + text_rows) {
         uefi_call_wrapper(ed->st->ConOut->EnableCursor, 2, ed->st->ConOut, TRUE);
@@ -323,6 +319,19 @@ static VOID editor_refresh(editor_t *ed) {
     } else {
         uefi_call_wrapper(ed->st->ConOut->EnableCursor, 2, ed->st->ConOut, FALSE);
     }
+}
+
+static VOID editor_refresh(editor_t *ed) {
+    editor_scroll(ed);
+    editor_draw_rows(ed);
+    editor_draw_status(ed);
+    editor_place_cursor(ed);
+}
+
+static VOID editor_refresh_cursor(editor_t *ed) {
+    editor_scroll(ed);
+    editor_draw_status(ed);
+    editor_place_cursor(ed);
 }
 
 static EFI_STATUS editor_insert_char(editor_t *ed, CHAR16 ch) {
@@ -760,11 +769,11 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
 
     uefi_call_wrapper(st->ConOut->ClearScreen, 1, st->ConOut);
 
+    editor_refresh(&ed);
+
     while (!quit) {
         EFI_INPUT_KEY key;
         UINTN idx;
-
-        editor_refresh(&ed);
 
         uefi_call_wrapper(st->BootServices->WaitForEvent, 3, 1, &st->ConIn->WaitForKey, &idx);
         if (EFI_ERROR(uefi_call_wrapper(st->ConIn->ReadKeyStroke, 2, st->ConIn, &key))) {
@@ -809,7 +818,15 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
         }
 
         if (key.ScanCode != SCAN_NULL) {
+            UINTN prev_row_off = ed.row_off;
+            UINTN prev_col_off = ed.col_off;
             move_cursor(&ed, key.ScanCode);
+            editor_scroll(&ed);
+            if (prev_row_off != ed.row_off || prev_col_off != ed.col_off) {
+                editor_refresh(&ed);
+            } else {
+                editor_refresh_cursor(&ed);
+            }
             continue;
         }
 
@@ -834,6 +851,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
                 set_status(&ed, L"Out of memory");
             }
         }
+        editor_refresh(&ed);
     }
 
     uefi_call_wrapper(st->ConOut->ClearScreen, 1, st->ConOut);
