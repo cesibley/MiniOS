@@ -22,8 +22,11 @@ LDFLAGS   := -nostdlib -znocombreloc -T $(EFILDS) \
 TARGET    := BOOTX64.EFI
 INTERMED  := boot.so
 OBJECTS   := boot.o
+PI_TARGET := PIX64.EFI
+PI_INTERMED := pi.so
+PI_OBJECTS := pi.o
 
-all: check $(TARGET)
+all: check $(TARGET) $(PI_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -45,10 +48,24 @@ $(TARGET): $(INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 
 clean:
-	rm -f $(OBJECTS) $(INTERMED) $(TARGET)
+	rm -f $(OBJECTS) $(INTERMED) $(TARGET) $(PI_OBJECTS) $(PI_INTERMED) $(PI_TARGET)
 
 run-info:
 	@echo "Copy $(TARGET) to:"
 	@echo "  EFI/BOOT/BOOTX64.EFI"
+	@echo "Optional PI tool:"
+	@echo "  EFI/BOOT/PIX64.EFI"
+
+pi.o: pi.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(PI_INTERMED): $(PI_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(PI_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(PI_TARGET): $(PI_INTERMED)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
 
 .PHONY: all clean check run-info

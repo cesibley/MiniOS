@@ -17,6 +17,22 @@ make
 ```
 
 The build outputs `BOOTX64.EFI` in the repo root.
+It also builds `PIX64.EFI`, a standalone UEFI app that computes π digits with a spigot algorithm.
+
+## Build only the PI app
+
+If you only want the PI calculator:
+
+```bash
+make check
+make PIX64.EFI
+```
+
+### What the PI app does
+
+- Prompts for decimal places (1-5000)
+- Computes π using an integer spigot algorithm
+- Prints `3.` followed by the requested digits
 
 ## Boot in VirtualBox (UEFI mode)
 
@@ -35,6 +51,7 @@ mkfs.vfat esp.img
 # Create UEFI fallback path inside image and copy bootloader
 mmd -i esp.img ::/EFI ::/EFI/BOOT
 mcopy -i esp.img BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+mcopy -i esp.img PIX64.EFI ::/EFI/BOOT/PIX64.EFI
 ```
 
 ### 2) Create and configure a VM in VirtualBox
@@ -56,6 +73,12 @@ VBoxManage storageattach "MiniOS" --storagectl "SATA" --port 0 --device 0 \
 ### 3) Boot
 
 Start the VM. UEFI should automatically load `EFI/BOOT/BOOTX64.EFI` and print the message.
+
+From the MiniOS shell, launch the PI program with:
+
+```text
+run PIX64.EFI
+```
 
 ## Troubleshooting
 
