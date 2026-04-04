@@ -1,5 +1,6 @@
 #include <efi.h>
 #include <efilib.h>
+#include "watchdog.h"
 
 static VOID wait_for_key(EFI_SYSTEM_TABLE *SystemTable) {
     EFI_INPUT_KEY key;
@@ -48,6 +49,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     (void)ImageHandle;
 
     InitializeLib(ImageHandle, SystemTable);
+    disable_uefi_watchdog(SystemTable);
     uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
     uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
 

@@ -1,5 +1,6 @@
 #include <efi.h>
 #include <efilib.h>
+#include "watchdog.h"
 
 #define INPUT_MAX 256
 #define FILE_CHUNK 128
@@ -902,6 +903,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     CHAR16 cwd[INPUT_MAX];
 
     InitializeLib(ImageHandle, SystemTable);
+    disable_uefi_watchdog(SystemTable);
     shell_cls(SystemTable);
 
     Print(L"MiniOS UEFI shell\r\n");

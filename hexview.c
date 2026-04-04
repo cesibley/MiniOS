@@ -1,5 +1,6 @@
 #include <efi.h>
 #include <efilib.h>
+#include "watchdog.h"
 
 #define INPUT_MAX 260
 #define BYTES_PER_LINE 16
@@ -129,6 +130,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     UINT64 offset = 0;
 
     InitializeLib(ImageHandle, SystemTable);
+    disable_uefi_watchdog(SystemTable);
     uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
     uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
 
