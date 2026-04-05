@@ -36,7 +36,7 @@ The current build also produces standalone UEFI utilities:
 - `GFXTEST.EFI` — queries GOP modes and draws color bars
 - `CLOCKX64.EFI` — prints the current UEFI clock time
 - `GFXCLOCK.EFI` — full-screen analog clock (xclock-style) that updates continuously
-- `SUNMAP.EFI` — higher-resolution world map demo with a real-time day/night illumination overlay (optionally loads `\\WORLDMAP.BIN` as a raw land-mask bitmap)
+- `SUNMAP.EFI` — world map demo derived from `world.svg` with a real-time day/night illumination overlay; land-mask data is embedded so the EFI binary is self-contained
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
 
@@ -104,7 +104,7 @@ run EDIT.EFI filename.txt
 edit filename.txt
 ```
 
-For `SUNMAP.EFI`, if a raw `\WORLDMAP.BIN` file is present at the drive root and its size matches the current GOP pixel count (`width * height` bytes; `0=ocean`, non-zero=land), it will be used as the land mask instead of the built-in fallback geometry.
+`SUNMAP.EFI` does not require external assets at runtime; the generated world land mask is embedded directly into the EFI binary.
 
 ## Build only one app
 
