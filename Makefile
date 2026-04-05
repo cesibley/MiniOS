@@ -34,7 +34,7 @@ CLOCK_OBJECTS := clock.o
 HEX_TARGET := HEXVIEW.EFI
 HEX_INTERMED := hexview.so
 HEX_OBJECTS := hexview.o
-EDIT_TARGET := TEXTEDIT.EFI
+EDIT_TARGET := EDIT.EFI
 EDIT_INTERMED := textedit.so
 EDIT_OBJECTS := textedit.o
 GFXCLOCK_TARGET := GFXCLOCK.EFI
@@ -90,7 +90,7 @@ run-info:
 	@echo "Optional hex viewer:"
 	@echo "  EFI/BOOT/HEXVIEW.EFI"
 	@echo "Optional text editor:"
-	@echo "  EFI/BOOT/TEXTEDIT.EFI"
+	@echo "  EFI/BOOT/EDIT.EFI"
 	@echo "Optional full-screen graphics clock:"
 	@echo "  EFI/BOOT/GFXCLOCK.EFI"
 

@@ -25,7 +25,8 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `rmdir DIR` — remove an empty directory.
 - `memmap` — print the full UEFI memory map descriptors.
 - `meminfo` — print memory totals grouped by UEFI memory type.
-- `run EFI_FILE` — load and execute another EFI application.
+- `run EFI_FILE [ARGS]` — load and execute another EFI application, optionally with arguments.
+- `edit FILE` — open `FILE` in the standalone editor (`EDIT.EFI`).
 - `reboot` — reboot the machine via UEFI `ResetSystem`.
 - `halt` — print a halt message and stop execution in an infinite loop.
 
@@ -36,7 +37,7 @@ The current build also produces standalone UEFI utilities:
 - `CLOCKX64.EFI` — prints the current UEFI clock time
 - `GFXCLOCK.EFI` — full-screen analog clock (xclock-style) that updates continuously
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
-- `TEXTEDIT.EFI` — full-screen text-mode editor for plain text files
+- `EDIT.EFI` — full-screen text-mode editor for plain text files
 
 ## Latest project configuration
 
@@ -77,9 +78,9 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `CLOCKX64.EFI`
 - `GFXCLOCK.EFI`
 - `HEXVIEW.EFI`
-- `TEXTEDIT.EFI`
+- `EDIT.EFI`
 
-`TEXTEDIT.EFI` is also copied into `iso_root/` during its build rule so it is immediately runnable in the QEMU FAT drive layout.
+`EDIT.EFI` is also copied into `iso_root/` during its build rule so it is immediately runnable in the QEMU FAT drive layout.
 
 ## Run with the current QEMU configuration
 
@@ -96,7 +97,8 @@ run GFXTEST.EFI
 run CLOCKX64.EFI
 run GFXCLOCK.EFI
 run HEXVIEW.EFI
-run TEXTEDIT.EFI
+run EDIT.EFI filename.txt
+edit filename.txt
 ```
 
 ## Build only one app

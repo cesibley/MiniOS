@@ -141,7 +141,9 @@ static VOID shell_help(VOID) {
     Print(L"  rmdir DIR          - remove an empty directory\r\n");
     Print(L"  freemem            - display total and free memory\r\n");
     Print(L"  freedisk           - display total and free disk space\r\n");
-    Print(L"  run EFI_FILE       - load + start another EFI application\r\n");
+    Print(L"  run EFI_FILE [ARG] - load + start another EFI application\r\n");
+    Print(L"  APP.EFI [ARG]      - shortcut for run APP.EFI [ARG]\r\n");
+    Print(L"  edit FILE          - launch EDIT.EFI with FILE preloaded\r\n");
     Print(L"  reboot             - reboot system via UEFI ResetSystem\r\n");
     Print(L"  halt               - stop here forever\r\n");
 }
@@ -556,11 +558,14 @@ static VOID shell_rmdir(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *
     uefi_call_wrapper(root->Close, 1, root);
 }
 
-static VOID shell_run_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+static VOID shell_run_file(CHAR16 *path, CHAR16 *load_options, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_LOADED_IMAGE *loaded_image;
+    EFI_LOADED_IMAGE *new_loaded_image;
     EFI_DEVICE_PATH_PROTOCOL *file_path = NULL;
     EFI_STATUS status;
     EFI_HANDLE new_image = NULL;
+    CHAR16 *child_load_options = NULL;
+    UINTN load_options_bytes = 0;
 
     status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
                                ImageHandle, &LoadedImageProtocol, (VOID **)&loaded_image);
@@ -582,6 +587,29 @@ static VOID shell_run_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABL
         goto cleanup;
     }
 
+    if (load_options != NULL && *load_options != 0) {
+        status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+                                   new_image, &LoadedImageProtocol, (VOID **)&new_loaded_image);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nFailed to set arguments: %r", status);
+            uefi_call_wrapper(SystemTable->BootServices->UnloadImage, 1, new_image);
+            goto cleanup;
+        }
+
+        load_options_bytes = (StrLen(load_options) + 1) * sizeof(CHAR16);
+        status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                                   EfiLoaderData, load_options_bytes, (VOID **)&child_load_options);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nFailed to allocate arguments: %r", status);
+            uefi_call_wrapper(SystemTable->BootServices->UnloadImage, 1, new_image);
+            goto cleanup;
+        }
+
+        CopyMem(child_load_options, load_options, load_options_bytes);
+        new_loaded_image->LoadOptions = child_load_options;
+        new_loaded_image->LoadOptionsSize = (UINT32)load_options_bytes;
+    }
+
     Print(L"\r\nStarting '%s'...", path);
     status = uefi_call_wrapper(SystemTable->BootServices->StartImage, 3, new_image, NULL, NULL);
     if (EFI_ERROR(status)) {
@@ -589,6 +617,10 @@ static VOID shell_run_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABL
         uefi_call_wrapper(SystemTable->BootServices->UnloadImage, 1, new_image);
     } else {
         Print(L"\r\nReturned from '%s'.", path);
+    }
+
+    if (child_load_options != NULL) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, child_load_options);
     }
 
 cleanup:
@@ -601,7 +633,6 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     CHAR16 *arg;
     CHAR16 resolved[INPUT_MAX];
     CHAR16 autorun[INPUT_MAX];
-    UINTN i;
 
     line = skip_spaces(line);
 
@@ -745,25 +776,58 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     }
 
     if (starts_with(line, L"run ")) {
+        CHAR16 *app;
+        CHAR16 *args;
+
         arg = skip_spaces(line + 4);
         if (*arg == 0) {
-            Print(L"\r\nUsage: run EFI_FILE");
+            Print(L"\r\nUsage: run EFI_FILE [ARGS]");
             return;
         }
-        resolve_path(cwd, arg, resolved, INPUT_MAX);
-        shell_run_file(resolved, ImageHandle, SystemTable);
+
+        app = arg;
+        while (*arg && *arg != L' ') arg++;
+        if (*arg != 0) {
+            *arg = 0;
+            args = skip_spaces(arg + 1);
+        } else {
+            args = arg;
+        }
+
+        resolve_path(cwd, app, resolved, INPUT_MAX);
+        shell_run_file(resolved, (*args != 0) ? args : NULL, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (starts_with(line, L"edit ")) {
+        CHAR16 edit_path[INPUT_MAX];
+
+        arg = skip_spaces(line + 5);
+        if (*arg == 0) {
+            Print(L"\r\nUsage: edit FILE");
+            return;
+        }
+
+        resolve_path(cwd, arg, edit_path, INPUT_MAX);
+        StrCpy(resolved, L"\\EDIT.EFI");
+        shell_run_file(resolved, edit_path, ImageHandle, SystemTable);
         return;
     }
 
     /*
-     * If this is a bare token (no spaces), treat it as a shortcut for `run`.
-     * Accept both "<filename>" and "<filename>.efi".
+     * Treat unknown commands as a shortcut for launching EFI apps.
+     * Accept both:
+     *   APP.EFI [ARGS]
+     *   APP [ARGS]      (".EFI" appended automatically)
      */
-    for (i = 0; line[i] != 0; i++) {
-        if (line[i] == L' ') break;
+    arg = line;
+    while (*arg && *arg != L' ') arg++;
+    if (*arg != 0) {
+        *arg = 0;
+        arg = skip_spaces(arg + 1);
     }
 
-    if (line[0] != 0 && line[i] == 0) {
+    if (line[0] != 0) {
         if (has_efi_ext(line)) {
             resolve_path(cwd, line, resolved, INPUT_MAX);
         } else {
@@ -777,7 +841,7 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
             resolve_path(cwd, autorun, resolved, INPUT_MAX);
         }
 
-        shell_run_file(resolved, ImageHandle, SystemTable);
+        shell_run_file(resolved, (*arg != 0) ? arg : NULL, ImageHandle, SystemTable);
         return;
     }
 

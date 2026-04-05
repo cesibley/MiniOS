@@ -5,6 +5,12 @@
 #define INPUT_MAX 260
 #define BYTES_PER_LINE 16
 
+typedef enum {
+    PAGE_NEXT_LINE,
+    PAGE_NEXT_SCREEN,
+    PAGE_QUIT
+} page_action_t;
+
 static EFI_STATUS open_root(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, EFI_FILE_HANDLE *root) {
     EFI_LOADED_IMAGE *loaded_image;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
@@ -49,40 +55,48 @@ static EFI_STATUS open_root(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTabl
     return EFI_NOT_FOUND;
 }
 
-static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN max_len) {
-    EFI_INPUT_KEY key;
-    UINTN index = 0;
-    UINTN event_index;
+static VOID parse_load_options_path(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, CHAR16 *path, UINTN path_max) {
+    EFI_LOADED_IMAGE *loaded_image = NULL;
+    EFI_STATUS status;
+    CHAR16 *options;
+    UINTN options_len;
+    UINTN i = 0;
+    UINTN out = 0;
 
-    while (1) {
-        uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3,
-                          1, &SystemTable->ConIn->WaitForKey, &event_index);
+    if (path_max == 0) {
+        return;
+    }
+    path[0] = 0;
 
-        if (uefi_call_wrapper(SystemTable->ConIn->ReadKeyStroke, 2, SystemTable->ConIn, &key) != EFI_SUCCESS) {
-            continue;
+    status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+                               ImageHandle, &LoadedImageProtocol, (VOID **)&loaded_image);
+    if (EFI_ERROR(status) || loaded_image == NULL ||
+        loaded_image->LoadOptions == NULL || loaded_image->LoadOptionsSize == 0) {
+        return;
+    }
+
+    options = (CHAR16 *)loaded_image->LoadOptions;
+    options_len = loaded_image->LoadOptionsSize / sizeof(CHAR16);
+    if (options_len == 0) {
+        return;
+    }
+
+    while (i < options_len && (options[i] == L' ' || options[i] == L'\t')) {
+        i++;
+    }
+
+    if (i < options_len && options[i] == L'"') {
+        i++;
+        while (i < options_len && options[i] != 0 && options[i] != L'"' && out + 1 < path_max) {
+            path[out++] = options[i++];
         }
-
-        if (key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
-            buffer[index] = 0;
-            Print(L"\r\n");
-            return EFI_SUCCESS;
-        }
-
-        if (key.UnicodeChar == CHAR_BACKSPACE) {
-            if (index > 0) {
-                index--;
-                buffer[index] = 0;
-                Print(L"\b \b");
-            }
-            continue;
-        }
-
-        if (key.UnicodeChar >= 32 && key.UnicodeChar < 127 && index < max_len - 1) {
-            buffer[index++] = key.UnicodeChar;
-            buffer[index] = 0;
-            Print(L"%c", key.UnicodeChar);
+    } else {
+        while (i < options_len && options[i] != 0 && options[i] != L' ' && options[i] != L'\t' && out + 1 < path_max) {
+            path[out++] = options[i++];
         }
     }
+
+    path[out] = 0;
 }
 
 static CHAR16 printable_ascii(CHAR8 c) {
@@ -121,6 +135,36 @@ static VOID wait_for_key(EFI_SYSTEM_TABLE *SystemTable) {
     uefi_call_wrapper(SystemTable->ConIn->ReadKeyStroke, 2, SystemTable->ConIn, &key);
 }
 
+static page_action_t wait_for_page_action(EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_INPUT_KEY key;
+    UINTN event_index;
+    UINTN col = 0;
+    UINTN row = 0;
+
+    if (!EFI_ERROR(uefi_call_wrapper(SystemTable->ConOut->QueryMode, 4,
+                                     SystemTable->ConOut, SystemTable->ConOut->Mode->Mode, &col, &row)) && row > 0) {
+        uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, row - 1);
+    }
+    Print(L"-- More -- (Space: page, Enter: line, Q: quit)");
+
+    while (1) {
+        uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3,
+                          1, &SystemTable->ConIn->WaitForKey, &event_index);
+        if (EFI_ERROR(uefi_call_wrapper(SystemTable->ConIn->ReadKeyStroke, 2, SystemTable->ConIn, &key))) {
+            continue;
+        }
+        if (key.UnicodeChar == L'q' || key.UnicodeChar == L'Q' || key.UnicodeChar == 0x1B) {
+            return PAGE_QUIT;
+        }
+        if (key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
+            return PAGE_NEXT_LINE;
+        }
+        if (key.UnicodeChar == L' ') {
+            return PAGE_NEXT_SCREEN;
+        }
+    }
+}
+
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_STATUS status;
     EFI_FILE_HANDLE root;
@@ -128,6 +172,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     CHAR16 path[INPUT_MAX];
     CHAR8 buf[BYTES_PER_LINE];
     UINT64 offset = 0;
+    UINTN mode_cols = 0;
+    UINTN screen_rows = 0;
+    UINTN page_rows;
+    UINTN lines_since_pause = 0;
+    UINTN pause_after;
 
     InitializeLib(ImageHandle, SystemTable);
     disable_uefi_watchdog(SystemTable);
@@ -135,11 +184,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
 
     Print(L"HEXVIEW (UEFI)\r\n");
-    Print(L"File path to view: ");
-    path[0] = 0;
-    read_line(SystemTable, path, INPUT_MAX);
+    parse_load_options_path(ImageHandle, SystemTable, path, INPUT_MAX);
     if (path[0] == 0) {
-        Print(L"No path provided.\r\n");
+        Print(L"No file selected (use: hexview <file> or run HEXVIEW.EFI <file>).\r\n");
         wait_for_key(SystemTable);
         return EFI_INVALID_PARAMETER;
     }
@@ -161,6 +208,17 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     Print(L"\r\nOffset    Hex bytes                                         ASCII\r\n");
     Print(L"--------  ------------------------------------------------  ----------------\r\n");
+    lines_since_pause = 2;
+    if (EFI_ERROR(uefi_call_wrapper(SystemTable->ConOut->QueryMode, 4,
+                                    SystemTable->ConOut, SystemTable->ConOut->Mode->Mode,
+                                    &mode_cols, &screen_rows)) || screen_rows < 4) {
+        page_rows = 25;
+    } else {
+        page_rows = screen_rows;
+    }
+    (void)mode_cols;
+    pause_after = page_rows > 1 ? page_rows - 1 : 1;
+
     while (1) {
         UINTN size = BYTES_PER_LINE;
         status = uefi_call_wrapper(file->Read, 3, file, &size, buf);
@@ -171,8 +229,28 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         if (size == 0) {
             break;
         }
+
+        if (lines_since_pause >= pause_after) {
+            page_action_t action = wait_for_page_action(SystemTable);
+            if (action == PAGE_QUIT) {
+                break;
+            }
+            if (action == PAGE_NEXT_SCREEN) {
+                lines_since_pause = 0;
+                uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
+                uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
+                Print(L"HEXVIEW (UEFI)  %s\r\n", path);
+                Print(L"Offset    Hex bytes                                         ASCII\r\n");
+                Print(L"--------  ------------------------------------------------  ----------------\r\n");
+                lines_since_pause = 3;
+            } else {
+                lines_since_pause = pause_after - 1;
+            }
+        }
+
         dump_line(offset, buf, size);
         offset += size;
+        lines_since_pause++;
     }
 
     uefi_call_wrapper(file->Close, 1, file);

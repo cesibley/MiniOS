@@ -698,38 +698,44 @@ done:
     return status;
 }
 
-static EFI_STATUS read_line(EFI_SYSTEM_TABLE *st, CHAR16 *buffer, UINTN max_len) {
-    EFI_INPUT_KEY key;
-    UINTN index = 0;
-    UINTN event_index;
+static VOID parse_load_options_path(editor_t *ed) {
+    EFI_LOADED_IMAGE *loaded_image = NULL;
+    EFI_STATUS status;
+    CHAR16 *options;
+    UINTN options_len;
+    UINTN i = 0;
+    UINTN out = 0;
 
-    while (1) {
-        uefi_call_wrapper(st->BootServices->WaitForEvent, 3, 1, &st->ConIn->WaitForKey, &event_index);
-        if (uefi_call_wrapper(st->ConIn->ReadKeyStroke, 2, st->ConIn, &key) != EFI_SUCCESS) {
-            continue;
+    ed->path[0] = 0;
+    status = uefi_call_wrapper(ed->st->BootServices->HandleProtocol, 3,
+                               ed->image, &LoadedImageProtocol, (VOID **)&loaded_image);
+    if (EFI_ERROR(status) || loaded_image == NULL ||
+        loaded_image->LoadOptions == NULL || loaded_image->LoadOptionsSize == 0) {
+        return;
+    }
+
+    options = (CHAR16 *)loaded_image->LoadOptions;
+    options_len = loaded_image->LoadOptionsSize / sizeof(CHAR16);
+    if (options_len == 0) {
+        return;
+    }
+
+    while (i < options_len && (options[i] == L' ' || options[i] == L'\t')) {
+        i++;
+    }
+
+    if (i < options_len && options[i] == L'"') {
+        i++;
+        while (i < options_len && options[i] != 0 && options[i] != L'"' && out + 1 < INPUT_MAX) {
+            ed->path[out++] = options[i++];
         }
-
-        if (key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
-            buffer[index] = 0;
-            Print(L"\r\n");
-            return EFI_SUCCESS;
-        }
-
-        if (key.UnicodeChar == CHAR_BACKSPACE) {
-            if (index > 0) {
-                index--;
-                buffer[index] = 0;
-                Print(L"\b \b");
-            }
-            continue;
-        }
-
-        if (key.UnicodeChar >= 32 && key.UnicodeChar < 127 && index < max_len - 1) {
-            buffer[index++] = key.UnicodeChar;
-            buffer[index] = 0;
-            Print(L"%c", key.UnicodeChar);
+    } else {
+        while (i < options_len && options[i] != 0 && options[i] != L' ' && options[i] != L'\t' && out + 1 < INPUT_MAX) {
+            ed->path[out++] = options[i++];
         }
     }
+
+    ed->path[out] = 0;
 }
 
 EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
@@ -749,11 +755,10 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
 
     uefi_call_wrapper(st->ConOut->ClearScreen, 1, st->ConOut);
     uefi_call_wrapper(st->ConOut->EnableCursor, 2, st->ConOut, TRUE);
-    Print(L"TEXTEDIT (UEFI)\r\nFile path to edit: ");
-    ed.path[0] = 0;
-    read_line(st, ed.path, INPUT_MAX);
+    Print(L"EDIT (UEFI)\r\n");
+    parse_load_options_path(&ed);
     if (ed.path[0] == 0) {
-        set_status(&ed, L"No path provided");
+        set_status(&ed, L"No file selected (use: edit <file>)");
     } else {
         CHAR16 load_status[64];
         status = editor_load_file(&ed);
