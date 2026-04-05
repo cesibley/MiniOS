@@ -22,6 +22,16 @@ static INTN starts_with(CHAR16 *s, CHAR16 *prefix) {
     return 1;
 }
 
+static INTN has_efi_ext(CHAR16 *name) {
+    UINTN len = StrLen(name);
+    if (len < 4) return 0;
+
+    return name[len - 4] == L'.' &&
+           (name[len - 3] == L'e' || name[len - 3] == L'E') &&
+           (name[len - 2] == L'f' || name[len - 2] == L'F') &&
+           (name[len - 1] == L'i' || name[len - 1] == L'I');
+}
+
 static CHAR16 *skip_spaces(CHAR16 *s) {
     while (*s == L' ') s++;
     return s;
@@ -655,6 +665,8 @@ cleanup:
 static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     CHAR16 *arg;
     CHAR16 resolved[INPUT_MAX];
+    CHAR16 autorun[INPUT_MAX];
+    UINTN i;
 
     line = skip_spaces(line);
 
@@ -804,6 +816,32 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
             return;
         }
         resolve_path(cwd, arg, resolved, INPUT_MAX);
+        shell_run_file(resolved, ImageHandle, SystemTable);
+        return;
+    }
+
+    /*
+     * If this is a bare token (no spaces), treat it as a shortcut for `run`.
+     * Accept both "<filename>" and "<filename>.efi".
+     */
+    for (i = 0; line[i] != 0; i++) {
+        if (line[i] == L' ') break;
+    }
+
+    if (line[0] != 0 && line[i] == 0) {
+        if (has_efi_ext(line)) {
+            resolve_path(cwd, line, resolved, INPUT_MAX);
+        } else {
+            if (StrLen(line) + StrLen(L".EFI") + 1 > INPUT_MAX) {
+                Print(L"\r\nCommand too long.");
+                return;
+            }
+            StrnCpy(autorun, line, INPUT_MAX - 1);
+            autorun[INPUT_MAX - 1] = 0;
+            StrCat(autorun, L".EFI");
+            resolve_path(cwd, autorun, resolved, INPUT_MAX);
+        }
+
         shell_run_file(resolved, ImageHandle, SystemTable);
         return;
     }
