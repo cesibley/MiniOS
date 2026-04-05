@@ -106,29 +106,6 @@ static VOID resolve_path(CHAR16 *cwd, CHAR16 *input, CHAR16 *out, UINTN out_len)
     }
 }
 
-static CHAR16 *mem_type_name(UINT32 type) {
-    switch (type) {
-        case EfiReservedMemoryType:      return L"Reserved";
-        case EfiLoaderCode:              return L"LoaderCode";
-        case EfiLoaderData:              return L"LoaderData";
-        case EfiBootServicesCode:        return L"BootSvcCode";
-        case EfiBootServicesData:        return L"BootSvcData";
-        case EfiRuntimeServicesCode:     return L"RtSvcCode";
-        case EfiRuntimeServicesData:     return L"RtSvcData";
-        case EfiConventionalMemory:      return L"Conventional";
-        case EfiUnusableMemory:          return L"Unusable";
-        case EfiACPIReclaimMemory:       return L"ACPIReclaim";
-        case EfiACPIMemoryNVS:           return L"ACPINVS";
-        case EfiMemoryMappedIO:          return L"MMIO";
-        case EfiMemoryMappedIOPortSpace: return L"MMIOPort";
-        case EfiPalCode:                 return L"PalCode";
-#ifdef EfiPersistentMemory
-        case EfiPersistentMemory:        return L"Persistent";
-#endif
-        default:                         return L"Unknown";
-    }
-}
-
 static EFI_STATUS open_root(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, EFI_FILE_HANDLE *root) {
     EFI_LOADED_IMAGE *loaded_image;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
@@ -162,8 +139,8 @@ static VOID shell_help(VOID) {
     Print(L"  del FILE           - delete a file\r\n");
     Print(L"  mkdir DIR          - create a directory\r\n");
     Print(L"  rmdir DIR          - remove an empty directory\r\n");
-    Print(L"  memmap             - show UEFI memory map\r\n");
-    Print(L"  meminfo            - summarize UEFI memory by type\r\n");
+    Print(L"  freemem            - display total and free memory\r\n");
+    Print(L"  freedisk           - display total and free disk space\r\n");
     Print(L"  run EFI_FILE       - load + start another EFI application\r\n");
     Print(L"  reboot             - reboot system via UEFI ResetSystem\r\n");
     Print(L"  halt               - stop here forever\r\n");
@@ -187,76 +164,7 @@ static VOID shell_reboot(EFI_SYSTEM_TABLE *SystemTable) {
                       EfiResetCold, EFI_SUCCESS, 0, NULL);
 }
 
-static VOID shell_memmap(EFI_SYSTEM_TABLE *SystemTable) {
-    EFI_STATUS status;
-    EFI_MEMORY_DESCRIPTOR *map = NULL;
-    EFI_MEMORY_DESCRIPTOR *desc;
-    UINTN map_size = 0;
-    UINTN map_key = 0;
-    UINTN desc_size = 0;
-    UINT32 desc_version = 0;
-    UINTN i, count;
-    UINT64 total_pages = 0;
-    UINT64 total_bytes = 0;
-
-    status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap, 5,
-                               &map_size, map, &map_key, &desc_size, &desc_version);
-
-    if (status != EFI_BUFFER_TOO_SMALL) {
-        Print(L"\r\nGetMemoryMap probe failed: %r", status);
-        return;
-    }
-
-    map_size += desc_size * 8;
-
-    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
-                               EfiLoaderData, map_size, (VOID **)&map);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nAllocatePool failed: %r", status);
-        return;
-    }
-
-    status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap, 5,
-                               &map_size, map, &map_key, &desc_size, &desc_version);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nGetMemoryMap failed: %r", status);
-        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, map);
-        return;
-    }
-
-    count = map_size / desc_size;
-
-    Print(L"\r\nMemory map:");
-    Print(L"\r\nIdx  Type           Pages        Start            End");
-
-    for (i = 0; i < count; i++) {
-        UINT64 start;
-        UINT64 end;
-
-        desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)map + (i * desc_size));
-        start = desc->PhysicalStart;
-        end   = desc->PhysicalStart + (desc->NumberOfPages * 4096ULL) - 1;
-
-        Print(L"\r\n%3d  %-13s %8lx  %012lx  %012lx",
-              i,
-              mem_type_name(desc->Type),
-              desc->NumberOfPages,
-              start,
-              end);
-
-        total_pages += desc->NumberOfPages;
-    }
-
-    total_bytes = total_pages * 4096ULL;
-
-    Print(L"\r\n\r\nDescriptors : %d", count);
-    Print(L"\r\nTotal pages  : %lx", total_pages);
-    Print(L"\r\nTotal bytes  : %lx", total_bytes);
-
-    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, map);
-}
-
-static VOID shell_meminfo(EFI_SYSTEM_TABLE *SystemTable) {
+static VOID shell_freemem(EFI_SYSTEM_TABLE *SystemTable) {
     EFI_STATUS status;
     EFI_MEMORY_DESCRIPTOR *map = NULL;
     UINTN map_size = 0;
@@ -265,9 +173,8 @@ static VOID shell_meminfo(EFI_SYSTEM_TABLE *SystemTable) {
     UINT32 desc_version = 0;
     UINTN i;
     UINTN count;
-    UINT64 pages_by_type[16] = {0};
     UINT64 total_pages = 0;
-    UINT64 usable_pages = 0;
+    UINT64 free_pages = 0;
 
     status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap, 5,
                                &map_size, map, &map_key, &desc_size, &desc_version);
@@ -295,32 +202,60 @@ static VOID shell_meminfo(EFI_SYSTEM_TABLE *SystemTable) {
     count = map_size / desc_size;
     for (i = 0; i < count; i++) {
         EFI_MEMORY_DESCRIPTOR *desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)map + i * desc_size);
-        UINT32 type = desc->Type;
-        UINT64 pages = desc->NumberOfPages;
-
-        total_pages += pages;
-        if (type < 16) {
-            pages_by_type[type] += pages;
-        }
-        if (type == EfiConventionalMemory) {
-            usable_pages += pages;
+        total_pages += desc->NumberOfPages;
+        if (desc->Type == EfiConventionalMemory) {
+            free_pages += desc->NumberOfPages;
         }
     }
 
-    Print(L"\r\nMemory summary:");
-    Print(L"\r\nDescriptors     : %d", count);
-    Print(L"\r\nTotal memory    : %lu MiB", (total_pages * 4096ULL) / (1024ULL * 1024ULL));
-    Print(L"\r\nUsable (conv.)  : %lu MiB", (usable_pages * 4096ULL) / (1024ULL * 1024ULL));
-    Print(L"\r\n\r\nBy type:");
-    for (i = 0; i < 16; i++) {
-        if (pages_by_type[i] == 0) continue;
-        Print(L"\r\n  %-13s %8lu pages (%lu MiB)",
-              mem_type_name((UINT32)i),
-              pages_by_type[i],
-              (pages_by_type[i] * 4096ULL) / (1024ULL * 1024ULL));
-    }
+    Print(L"\r\nMemory:");
+    Print(L"\r\n  Total: %lu MiB", (total_pages * 4096ULL) / (1024ULL * 1024ULL));
+    Print(L"\r\n  Free : %lu MiB", (free_pages * 4096ULL) / (1024ULL * 1024ULL));
 
     uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, map);
+}
+
+static VOID shell_freedisk(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_STATUS status;
+    EFI_FILE_SYSTEM_INFO *fs_info = NULL;
+    UINTN info_size = 0;
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->GetInfo, 4, root, &FileSystemInfo, &info_size, fs_info);
+    if (status != EFI_BUFFER_TOO_SMALL) {
+        Print(L"\r\nFailed to query filesystem info size: %r", status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, info_size, (VOID **)&fs_info);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nAllocatePool failed: %r", status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->GetInfo, 4, root, &FileSystemInfo, &info_size, fs_info);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to read filesystem info: %r", status);
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, fs_info);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    Print(L"\r\nDisk:");
+    Print(L"\r\n  Total: %lu MiB", fs_info->VolumeSize / (1024ULL * 1024ULL));
+    Print(L"\r\n  Free : %lu MiB", fs_info->FreeSpace / (1024ULL * 1024ULL));
+
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, fs_info);
+    uefi_call_wrapper(root->Close, 1, root);
 }
 
 static VOID print_file_info_line(EFI_FILE_INFO *info) {
@@ -694,13 +629,13 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         return;
     }
 
-    if (str_eq(line, L"memmap")) {
-        shell_memmap(SystemTable);
+    if (str_eq(line, L"freemem")) {
+        shell_freemem(SystemTable);
         return;
     }
 
-    if (str_eq(line, L"meminfo")) {
-        shell_meminfo(SystemTable);
+    if (str_eq(line, L"freedisk")) {
+        shell_freedisk(ImageHandle, SystemTable);
         return;
     }
 
