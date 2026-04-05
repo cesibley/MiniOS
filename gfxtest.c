@@ -2,6 +2,11 @@
 #include <efilib.h>
 #include "watchdog.h"
 
+static VOID cls(EFI_SYSTEM_TABLE *SystemTable) {
+    uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
+    uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
+}
+
 static VOID wait_for_key(EFI_SYSTEM_TABLE *SystemTable) {
     EFI_INPUT_KEY key;
     UINTN event_index;
@@ -50,8 +55,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     InitializeLib(ImageHandle, SystemTable);
     disable_uefi_watchdog(SystemTable);
-    uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
-    uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
+    cls(SystemTable);
 
     Print(L"GFX Test (UEFI GOP)\r\n");
 
@@ -60,6 +64,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     if (EFI_ERROR(status) || gop == NULL) {
         Print(L"Graphics Output Protocol not found: %r\r\n", status);
         wait_for_key(SystemTable);
+        cls(SystemTable);
         return status;
     }
 
@@ -84,5 +89,6 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     fill_screen_with_color_bars(gop);
 
     wait_for_key(SystemTable);
+    cls(SystemTable);
     return EFI_SUCCESS;
 }

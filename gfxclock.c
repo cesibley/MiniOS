@@ -310,6 +310,11 @@ static BOOLEAN key_pressed(EFI_SYSTEM_TABLE *SystemTable) {
     return !EFI_ERROR(status);
 }
 
+static VOID cls(EFI_SYSTEM_TABLE *SystemTable) {
+    uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
+    uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
+}
+
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_STATUS status;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
@@ -329,7 +334,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     status = locate_gop(SystemTable, &gop);
     if (EFI_ERROR(status) || gop == NULL) {
         Print(L"GOP unavailable: %r\r\n", status);
-        return status;
+        goto cleanup;
     }
 
     width = gop->Mode->Info->HorizontalResolution;
@@ -346,7 +351,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         status = uefi_call_wrapper(SystemTable->RuntimeServices->GetTime, 2, &now, NULL);
         if (EFI_ERROR(status)) {
             Print(L"GetTime failed: %r\r\n", status);
-            return status;
+            goto cleanup;
         }
 
         if ((INTN)now.Second != last_second) {
@@ -378,6 +383,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         uefi_call_wrapper(SystemTable->BootServices->Stall, 1, 100000);
     }
 
-    fill_rect(gop, 0, 0, width, height, bg);
-    return EFI_SUCCESS;
+cleanup:
+    if (gop != NULL) {
+        fill_rect(gop, 0, 0, width, height, bg);
+    }
+    cls(SystemTable);
+    return status;
 }
