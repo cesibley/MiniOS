@@ -5,7 +5,8 @@
 #define INPUT_MAX 256
 #define FILE_CHUNK 128
 
-static VOID print_prompt(VOID) {
+static VOID print_prompt(EFI_SYSTEM_TABLE *SystemTable) {
+    uefi_call_wrapper(SystemTable->ConOut->EnableCursor, 2, SystemTable->ConOut, TRUE);
     Print(L"\r\nMiniOS> ");
 }
 
@@ -902,7 +903,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     while (1) {
         line[0] = 0;
-        print_prompt();
+        print_prompt(SystemTable);
         read_line(SystemTable, line, INPUT_MAX);
         execute_command(line, cwd, ImageHandle, SystemTable);
     }
