@@ -34,6 +34,7 @@ The current build also produces standalone UEFI utilities:
 - `PIX64.EFI` — computes π digits with a spigot algorithm
 - `GFXTEST.EFI` — queries GOP modes and draws color bars
 - `CLOCKX64.EFI` — prints the current UEFI clock time
+- `GFXCLOCK.EFI` — full-screen analog clock (xclock-style) that updates continuously
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
 - `TEXTEDIT.EFI` — full-screen text-mode editor for plain text files
 
@@ -74,6 +75,7 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `PIX64.EFI`
 - `GFXTEST.EFI`
 - `CLOCKX64.EFI`
+- `GFXCLOCK.EFI`
 - `HEXVIEW.EFI`
 - `TEXTEDIT.EFI`
 
@@ -92,6 +94,7 @@ run BOOTX64.EFI
 run PIX64.EFI
 run GFXTEST.EFI
 run CLOCKX64.EFI
+run GFXCLOCK.EFI
 run HEXVIEW.EFI
 run TEXTEDIT.EFI
 ```

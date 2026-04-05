@@ -37,8 +37,11 @@ HEX_OBJECTS := hexview.o
 EDIT_TARGET := TEXTEDIT.EFI
 EDIT_INTERMED := textedit.so
 EDIT_OBJECTS := textedit.o
+GFXCLOCK_TARGET := GFXCLOCK.EFI
+GFXCLOCK_INTERMED := gfxclock.so
+GFXCLOCK_OBJECTS := gfxclock.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET)
+all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -69,8 +72,10 @@ clean:
 	      $(CLOCK_OBJECTS) $(CLOCK_INTERMED) $(CLOCK_TARGET) \
 	      $(HEX_OBJECTS) $(HEX_INTERMED) $(HEX_TARGET) \
 	      $(EDIT_OBJECTS) $(EDIT_INTERMED) $(EDIT_TARGET) \
+	      $(GFXCLOCK_OBJECTS) $(GFXCLOCK_INTERMED) $(GFXCLOCK_TARGET) \
 	      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
 	      iso_root/$(CLOCK_TARGET) iso_root/$(HEX_TARGET) iso_root/$(EDIT_TARGET) \
+	      iso_root/$(GFXCLOCK_TARGET) \
 	      iso_root/EFI/BOOT/$(TARGET)
 
 run-info:
@@ -86,6 +91,8 @@ run-info:
 	@echo "  EFI/BOOT/HEXVIEW.EFI"
 	@echo "Optional text editor:"
 	@echo "  EFI/BOOT/TEXTEDIT.EFI"
+	@echo "Optional full-screen graphics clock:"
+	@echo "  EFI/BOOT/GFXCLOCK.EFI"
 
 pi.o: pi.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -146,6 +153,19 @@ $(EDIT_INTERMED): $(EDIT_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(EDIT_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
 $(EDIT_TARGET): $(EDIT_INTERMED)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
+
+gfxclock.o: gfxclock.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(GFXCLOCK_INTERMED): $(GFXCLOCK_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(GFXCLOCK_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(GFXCLOCK_TARGET): $(GFXCLOCK_INTERMED)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
