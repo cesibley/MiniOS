@@ -139,7 +139,7 @@ static INTN sun_declination_deg(const EFI_TIME *utc_now) {
 static INTN sun_longitude_deg_x10(const EFI_TIME *utc_now) {
     /* Subsolar longitude: 0 at 12:00 UTC. */
     INTN total_seconds = (INTN)utc_now->Hour * 3600 + (INTN)utc_now->Minute * 60 + (INTN)utc_now->Second;
-    INTN lon_x10 = (total_seconds / 24) - 1800;
+    INTN lon_x10 = 1800 - (total_seconds / 24);
 
     while (lon_x10 > 1800) {
         lon_x10 -= 3600;
@@ -496,7 +496,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
         compute_local_time(&now_utc, &now_local);
         subsolar_lon_x10 = sun_longitude_deg_x10(&now_utc);
-        subsolar_lon_x10 += (equation_of_time_min(&now_utc) * 10) / 4;
+        subsolar_lon_x10 -= (equation_of_time_min(&now_utc) * 10) / 4;
         while (subsolar_lon_x10 > 1800) {
             subsolar_lon_x10 -= 3600;
         }
