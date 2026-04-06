@@ -5,11 +5,13 @@
 
 #define PI_X1000000 3141593
 #define TWILIGHT_COS_X1000 -120
+#define MINUTES_PER_DAY 1440
+#define SECONDS_PER_DAY 86400
 /*
- * If firmware reports EFI_UNSPECIFIED_TIMEZONE, treat it as Pacific local time
- * (including DST rules) and convert to UTC for solar calculations.
+ * Match gfxclock fallback behavior when firmware does not provide timezone.
+ * Positive values are east of UTC; 420 means UTC-7 local display.
  */
-#define SUNMAP_ASSUME_PACIFIC_IF_TZ_UNSPECIFIED 1
+#define SUNMAP_FALLBACK_TZ_MINUTES 420
 
 
 static INTN sin_deg_x10000(INTN deg) {
@@ -68,113 +70,43 @@ static INTN day_of_year(UINTN year, UINTN month, UINTN day) {
     return (INTN)total;
 }
 
-static UINTN days_in_month(UINTN year, UINTN month) {
-    static const UINTN month_days[12] = {
-        31, 28, 31, 30, 31, 30,
-        31, 31, 30, 31, 30, 31
-    };
-    BOOLEAN leap = ((year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))) ? TRUE : FALSE;
-    UINTN d = month_days[month - 1];
-
-    if (month == 2 && leap) {
-        d += 1;
+static INTN positive_mod(INTN value, INTN mod) {
+    INTN out = value % mod;
+    if (out < 0) {
+        out += mod;
     }
-    return d;
+    return out;
 }
 
-static UINTN day_of_week(UINTN year, UINTN month, UINTN day) {
-    static const UINTN t[12] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
-    UINTN y = year;
-    if (month < 3) {
-        y -= 1;
-    }
-    /* 0=Sunday .. 6=Saturday */
-    return (y + y / 4 - y / 100 + y / 400 + t[month - 1] + day) % 7;
-}
+static VOID compute_local_time(const EFI_TIME *utc_now, EFI_TIME *local_now) {
+    INTN tz_minutes;
+    INTN local_minutes;
+    INTN local_seconds;
 
-static INTN pacific_utc_offset_minutes(const EFI_TIME *t) {
-    UINTN march_first_dow = day_of_week(t->Year, 3, 1);
-    UINTN november_first_dow = day_of_week(t->Year, 11, 1);
-    UINTN second_sunday_march = 1 + ((7 - march_first_dow) % 7) + 7;
-    UINTN first_sunday_november = 1 + ((7 - november_first_dow) % 7);
-    BOOLEAN in_dst = FALSE;
+    *local_now = *utc_now;
 
-    if (t->Month > 3 && t->Month < 11) {
-        in_dst = TRUE;
-    } else if (t->Month == 3) {
-        if (t->Day > second_sunday_march) {
-            in_dst = TRUE;
-        } else if (t->Day == second_sunday_march && t->Hour >= 2) {
-            in_dst = TRUE;
-        }
-    } else if (t->Month == 11) {
-        if (t->Day < first_sunday_november) {
-            in_dst = TRUE;
-        } else if (t->Day == first_sunday_november && t->Hour < 2) {
-            in_dst = TRUE;
-        }
-    }
-
-    /* local Pacific -> UTC offset (minutes to add to local clock) */
-    return in_dst ? 420 : 480;
-}
-
-static VOID normalize_to_utc(EFI_TIME *t) {
-    INTN tz_min;
-    INTN total_seconds;
-
-    if (t->TimeZone == EFI_UNSPECIFIED_TIMEZONE) {
-        /* Unspecified timezone fallback is controlled by SUNMAP_ASSUME_PACIFIC_IF_TZ_UNSPECIFIED. */
-#if SUNMAP_ASSUME_PACIFIC_IF_TZ_UNSPECIFIED
-        tz_min = pacific_utc_offset_minutes(t);
-#else
-        tz_min = 0;
-#endif
+    if (utc_now->TimeZone == EFI_UNSPECIFIED_TIMEZONE) {
+        tz_minutes = SUNMAP_FALLBACK_TZ_MINUTES;
     } else {
-        /*
-         * EFI timezone is minutes west of UTC, so converting local -> UTC
-         * means adding that many minutes.
-         */
-        tz_min = (INTN)t->TimeZone;
-    }
-    total_seconds = (INTN)t->Hour * 3600 + (INTN)t->Minute * 60 + (INTN)t->Second + tz_min * 60;
-
-    while (total_seconds < 0) {
-        UINTN dim;
-        if (t->Day > 1) {
-            t->Day -= 1;
-        } else {
-            if (t->Month > 1) {
-                t->Month -= 1;
-            } else {
-                t->Month = 12;
-                t->Year -= 1;
-            }
-            dim = days_in_month(t->Year, t->Month);
-            t->Day = (UINT8)dim;
-        }
-        total_seconds += 24 * 3600;
+        tz_minutes = utc_now->TimeZone;
     }
 
-    while (total_seconds >= 24 * 3600) {
-        UINTN dim = days_in_month(t->Year, t->Month);
-        total_seconds -= 24 * 3600;
-        if (t->Day < dim) {
-            t->Day += 1;
-        } else {
-            t->Day = 1;
-            if (t->Month < 12) {
-                t->Month += 1;
-            } else {
-                t->Month = 1;
-                t->Year += 1;
-            }
-        }
+    /*
+     * UEFI timezone semantics: LocalTime = UTC - TimeZone.
+     * Example: US Eastern Standard Time is +300.
+     */
+    local_minutes = ((INTN)utc_now->Hour * 60) + (INTN)utc_now->Minute - tz_minutes;
+    local_minutes = positive_mod(local_minutes, MINUTES_PER_DAY);
+    local_seconds = positive_mod((local_minutes * 60) + (INTN)utc_now->Second, SECONDS_PER_DAY);
+
+    if ((utc_now->Daylight & EFI_TIME_ADJUST_DAYLIGHT) != 0 &&
+        (utc_now->Daylight & EFI_TIME_IN_DAYLIGHT) != 0) {
+        local_seconds = positive_mod(local_seconds + 3600, SECONDS_PER_DAY);
     }
 
-    t->Hour = (UINT8)(total_seconds / 3600);
-    t->Minute = (UINT8)((total_seconds % 3600) / 60);
-    t->Second = (UINT8)(total_seconds % 60);
+    local_now->Hour = (UINT8)(local_seconds / 3600);
+    local_now->Minute = (UINT8)((local_seconds % 3600) / 60);
+    local_now->Second = (UINT8)(local_seconds % 60);
 }
 
 static BOOLEAN is_land(INTN lon_x10, INTN lat_x10) {
@@ -244,11 +176,184 @@ static INTN cos_solar_zenith_x1000(INTN lat_deg, INTN lon_deg, INTN subsolar_lat
     return (INTN)(c / 10);
 }
 
+static VOID fill_rect(EFI_GRAPHICS_OUTPUT_BLT_PIXEL *frame,
+                      UINTN width,
+                      UINTN height,
+                      UINTN x0,
+                      UINTN y0,
+                      UINTN rect_w,
+                      UINTN rect_h,
+                      UINT8 r,
+                      UINT8 g,
+                      UINT8 b) {
+    UINTN y;
+    UINTN y_end = y0 + rect_h;
+    UINTN x_end = x0 + rect_w;
+
+    if (x0 >= width || y0 >= height) {
+        return;
+    }
+    if (x_end > width) {
+        x_end = width;
+    }
+    if (y_end > height) {
+        y_end = height;
+    }
+
+    for (y = y0; y < y_end; y++) {
+        UINTN x;
+        for (x = x0; x < x_end; x++) {
+            EFI_GRAPHICS_OUTPUT_BLT_PIXEL *px = &frame[y * width + x];
+            px->Red = r;
+            px->Green = g;
+            px->Blue = b;
+            px->Reserved = 0;
+        }
+    }
+}
+
+static UINT8 glyph_5x7(CHAR8 ch, UINTN row) {
+    switch (ch) {
+        case '0': {
+            static const UINT8 g[7] = {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E};
+            return g[row];
+        }
+        case '1': {
+            static const UINT8 g[7] = {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E};
+            return g[row];
+        }
+        case '2': {
+            static const UINT8 g[7] = {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F};
+            return g[row];
+        }
+        case '3': {
+            static const UINT8 g[7] = {0x1E, 0x01, 0x01, 0x0E, 0x01, 0x01, 0x1E};
+            return g[row];
+        }
+        case '4': {
+            static const UINT8 g[7] = {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02};
+            return g[row];
+        }
+        case '5': {
+            static const UINT8 g[7] = {0x1F, 0x10, 0x10, 0x1E, 0x01, 0x01, 0x1E};
+            return g[row];
+        }
+        case '6': {
+            static const UINT8 g[7] = {0x0E, 0x10, 0x10, 0x1E, 0x11, 0x11, 0x0E};
+            return g[row];
+        }
+        case '7': {
+            static const UINT8 g[7] = {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08};
+            return g[row];
+        }
+        case '8': {
+            static const UINT8 g[7] = {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E};
+            return g[row];
+        }
+        case '9': {
+            static const UINT8 g[7] = {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x01, 0x0E};
+            return g[row];
+        }
+        case ':': {
+            static const UINT8 g[7] = {0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00};
+            return g[row];
+        }
+        case 'U': {
+            static const UINT8 g[7] = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
+            return g[row];
+        }
+        case 'T': {
+            static const UINT8 g[7] = {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
+            return g[row];
+        }
+        case 'C': {
+            static const UINT8 g[7] = {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E};
+            return g[row];
+        }
+        case 'L': {
+            static const UINT8 g[7] = {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F};
+            return g[row];
+        }
+        case 'O': {
+            static const UINT8 g[7] = {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
+            return g[row];
+        }
+        case 'A': {
+            static const UINT8 g[7] = {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11};
+            return g[row];
+        }
+        default:
+            return 0x00;
+    }
+}
+
+static VOID draw_glyph(EFI_GRAPHICS_OUTPUT_BLT_PIXEL *frame,
+                       UINTN width,
+                       UINTN height,
+                       UINTN x,
+                       UINTN y,
+                       CHAR8 ch,
+                       UINTN scale,
+                       UINT8 r,
+                       UINT8 g,
+                       UINT8 b) {
+    UINTN row;
+
+    for (row = 0; row < 7; row++) {
+        UINT8 bits = glyph_5x7(ch, row);
+        UINTN col;
+        for (col = 0; col < 5; col++) {
+            if ((bits & (1U << (4 - col))) != 0) {
+                fill_rect(frame, width, height,
+                          x + col * scale, y + row * scale,
+                          scale, scale,
+                          r, g, b);
+            }
+        }
+    }
+}
+
+static VOID draw_text(EFI_GRAPHICS_OUTPUT_BLT_PIXEL *frame,
+                      UINTN width,
+                      UINTN height,
+                      UINTN x,
+                      UINTN y,
+                      CONST CHAR8 *text,
+                      UINTN scale,
+                      UINT8 r,
+                      UINT8 g,
+                      UINT8 b) {
+    UINTN i = 0;
+
+    while (text[i] != '\0') {
+        draw_glyph(frame, width, height, x + i * (6 * scale), y, text[i], scale, r, g, b);
+        i++;
+    }
+}
+
+static VOID format_time_line(CHAR8 *out, CONST CHAR8 *label, CONST EFI_TIME *t) {
+    out[0] = label[0];
+    out[1] = label[1];
+    out[2] = label[2];
+    out[3] = ' ';
+    out[4] = (CHAR8)('0' + (t->Hour / 10));
+    out[5] = (CHAR8)('0' + (t->Hour % 10));
+    out[6] = ':';
+    out[7] = (CHAR8)('0' + (t->Minute / 10));
+    out[8] = (CHAR8)('0' + (t->Minute % 10));
+    out[9] = ':';
+    out[10] = (CHAR8)('0' + (t->Second / 10));
+    out[11] = (CHAR8)('0' + (t->Second % 10));
+    out[12] = '\0';
+}
+
 static VOID render_frame(EFI_GRAPHICS_OUTPUT_BLT_PIXEL *frame,
                          UINTN width,
                          UINTN height,
                          INTN subsolar_lon_x10,
-                         INTN subsolar_lat_deg) {
+                         INTN subsolar_lat_deg,
+                         CONST EFI_TIME *local_now,
+                         CONST EFI_TIME *utc_now) {
     UINTN map_w = width;
     UINTN map_h = (width * 9) / 18;
     UINTN x_off = 0;
@@ -330,6 +435,23 @@ static VOID render_frame(EFI_GRAPHICS_OUTPUT_BLT_PIXEL *frame,
             frame[y * width + x] = px;
         }
     }
+
+    {
+        CHAR8 utc_line[13];
+        CHAR8 local_line[13];
+        UINTN scale = 2;
+        UINTN text_w = 12 * 6 * scale;
+        UINTN text_h = 2 * 7 * scale + 3 * scale;
+        UINTN panel_x = x_off + 8;
+        UINTN panel_y = y_off + 8;
+
+        format_time_line(utc_line, "UTC", utc_now);
+        format_time_line(local_line, "LOC", local_now);
+
+        fill_rect(frame, width, height, panel_x, panel_y, text_w + 8, text_h + 8, 0, 0, 0);
+        draw_text(frame, width, height, panel_x + 4, panel_y + 4, utc_line, scale, 255, 255, 255);
+        draw_text(frame, width, height, panel_x + 4, panel_y + 4 + 8 * scale, local_line, scale, 255, 255, 255);
+    }
 }
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
@@ -363,6 +485,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     while (1) {
         EFI_TIME now_utc;
+        EFI_TIME now_local;
         INTN subsolar_lon_x10;
         INTN subsolar_lat_deg;
 
@@ -371,7 +494,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             break;
         }
 
-        normalize_to_utc(&now_utc);
+        compute_local_time(&now_utc, &now_local);
         subsolar_lon_x10 = sun_longitude_deg_x10(&now_utc);
         subsolar_lon_x10 += (equation_of_time_min(&now_utc) * 10) / 4;
         while (subsolar_lon_x10 > 1800) {
@@ -382,7 +505,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         }
         subsolar_lat_deg = sun_declination_deg(&now_utc);
 
-        render_frame(frame, width, height, subsolar_lon_x10, subsolar_lat_deg);
+        render_frame(frame, width, height, subsolar_lon_x10, subsolar_lat_deg, &now_local, &now_utc);
 
         uefi_call_wrapper(gop->Blt, 10,
                           gop,
