@@ -43,8 +43,11 @@ GFXCLOCK_OBJECTS := gfxclock.o
 SUNMAP_TARGET := SUNMAP.EFI
 SUNMAP_INTERMED := sunmap.so
 SUNMAP_OBJECTS := sunmap.o
+GOPQUERY_TARGET := GOPQUERY.EFI
+GOPQUERY_INTERMED := gopquery.so
+GOPQUERY_OBJECTS := gopquery.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET)
+all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -77,9 +80,11 @@ clean:
 	      $(EDIT_OBJECTS) $(EDIT_INTERMED) $(EDIT_TARGET) \
 	      $(GFXCLOCK_OBJECTS) $(GFXCLOCK_INTERMED) $(GFXCLOCK_TARGET) \
 	      $(SUNMAP_OBJECTS) $(SUNMAP_INTERMED) $(SUNMAP_TARGET) \
+	      $(GOPQUERY_OBJECTS) $(GOPQUERY_INTERMED) $(GOPQUERY_TARGET) \
 	      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
 	      iso_root/$(CLOCK_TARGET) iso_root/$(HEX_TARGET) iso_root/$(EDIT_TARGET) \
 	      iso_root/$(GFXCLOCK_TARGET) iso_root/$(SUNMAP_TARGET) \
+	      iso_root/$(GOPQUERY_TARGET) \
 	      iso_root/EFI/BOOT/$(TARGET)
 
 run-info:
@@ -99,6 +104,8 @@ run-info:
 	@echo "  EFI/BOOT/GFXCLOCK.EFI"
 	@echo "Optional world illumination map demo:"
 	@echo "  EFI/BOOT/SUNMAP.EFI"
+	@echo "Optional GOP query tool:"
+	@echo "  EFI/BOOT/GOPQUERY.EFI"
 
 pi.o: pi.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -185,6 +192,19 @@ $(SUNMAP_INTERMED): $(SUNMAP_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(SUNMAP_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
 $(SUNMAP_TARGET): $(SUNMAP_INTERMED)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
+
+gopquery.o: gopquery.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(GOPQUERY_INTERMED): $(GOPQUERY_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(GOPQUERY_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(GOPQUERY_TARGET): $(GOPQUERY_INTERMED)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \

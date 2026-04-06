@@ -37,6 +37,7 @@ The current build also produces standalone UEFI utilities:
 - `CLOCKX64.EFI` — prints the current UEFI clock time
 - `GFXCLOCK.EFI` — full-screen analog clock (xclock-style) that updates continuously
 - `SUNMAP.EFI` — world map demo derived from `world.svg` with a real-time day/night illumination overlay; land-mask data is embedded so the EFI binary is self-contained
+- `GOPQUERY.EFI` — GOP capability query tool with per-mode inspection and optional mode switching
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
 
@@ -79,6 +80,7 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `CLOCKX64.EFI`
 - `GFXCLOCK.EFI`
 - `SUNMAP.EFI`
+- `GOPQUERY.EFI`
 - `HEXVIEW.EFI`
 - `EDIT.EFI`
 
@@ -99,12 +101,22 @@ run GFXTEST.EFI
 run CLOCKX64.EFI
 run GFXCLOCK.EFI
 run SUNMAP.EFI
+run GOPQUERY.EFI
 run HEXVIEW.EFI
 run EDIT.EFI filename.txt
 edit filename.txt
 ```
 
 `SUNMAP.EFI` does not require external assets at runtime; the generated world land mask is embedded directly into the EFI binary.
+
+`GOPQUERY.EFI` supports argument-based query mode:
+
+```text
+run GOPQUERY.EFI
+run GOPQUERY.EFI mode 3
+run GOPQUERY.EFI 3
+run GOPQUERY.EFI set 2
+```
 
 ## Build only one app
 
