@@ -2,6 +2,17 @@
 #include <efilib.h>
 #include "watchdog.h"
 
+#define STBI_NO_STDIO
+#define STBI_NO_LINEAR
+#define STBI_NO_HDR
+#define STBI_NO_THREAD_LOCALS
+#define STBI_MALLOC(sz) AllocatePool((UINTN)(sz))
+#define STBI_REALLOC_SIZED(p, oldsz, newsz) ReallocatePool((UINTN)(oldsz), (UINTN)(newsz), (p))
+#define STBI_FREE(p) FreePool((p))
+#define STBI_ASSERT(x) ((void)0)
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #define INPUT_MAX 260
 
 typedef enum {
@@ -11,35 +22,6 @@ typedef enum {
     IMAGE_FMT_GIF,
     IMAGE_FMT_PNG
 } image_format_t;
-
-typedef struct {
-    UINT16 Width;
-    UINT16 Height;
-    union {
-        EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Bitmap;
-        EFI_GRAPHICS_OUTPUT_PROTOCOL *Screen;
-    } Image;
-} EFI_IMAGE_OUTPUT;
-
-typedef struct _EFI_HII_IMAGE_DECODER_PROTOCOL EFI_HII_IMAGE_DECODER_PROTOCOL;
-typedef EFI_STATUS(EFIAPI *EFI_HII_IMAGE_DECODER_DECODE)(
-    IN EFI_HII_IMAGE_DECODER_PROTOCOL *This,
-    IN VOID *Image,
-    IN UINTN ImageRawDataSize,
-    IN OUT EFI_IMAGE_OUTPUT **Bitmap,
-    IN BOOLEAN Transparent
-);
-
-struct _EFI_HII_IMAGE_DECODER_PROTOCOL {
-    VOID *GetImageDecoderName;
-    VOID *GetImageInfo;
-    EFI_HII_IMAGE_DECODER_DECODE DecodeImage;
-};
-
-static EFI_GUID gEfiHiiImageDecoderProtocolGuid = {
-    0x2f707ebb, 0x4a1a, 0x11d4,
-    {0x9a, 0x38, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d}
-};
 
 static UINT16 rd_u16(const UINT8 *p) {
     return (UINT16)(p[0] | ((UINT16)p[1] << 8));
@@ -60,7 +42,9 @@ static VOID wait_for_key(EFI_SYSTEM_TABLE *SystemTable, CONST CHAR16 *prompt) {
     EFI_INPUT_KEY key;
     UINTN event_index;
 
-    Print(L"\r\n%s", prompt);
+    if (prompt != NULL && prompt[0] != 0) {
+        Print(L"\r\n%s", prompt);
+    }
     uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3,
                       1, &SystemTable->ConIn->WaitForKey, &event_index);
     uefi_call_wrapper(SystemTable->ConIn->ReadKeyStroke, 2, SystemTable->ConIn, &key);
@@ -222,66 +206,25 @@ static EFI_STATUS decode_bmp_rgb(const UINT8 *data, UINTN size,
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS decode_with_hii_decoder(EFI_SYSTEM_TABLE *SystemTable,
-                                          const UINT8 *data, UINTN size,
-                                          UINT8 **rgba_out, UINTN *w_out, UINTN *h_out) {
-    EFI_STATUS status;
-    EFI_HANDLE *handles = NULL;
-    UINTN handle_count = 0;
-    UINTN i;
+static EFI_STATUS decode_with_stb(const UINT8 *data, UINTN size,
+                                  UINT8 **rgba_out, UINTN *w_out, UINTN *h_out) {
+    int w;
+    int h;
+    stbi_uc *decoded;
 
-    status = uefi_call_wrapper(SystemTable->BootServices->LocateHandleBuffer, 5,
-                               ByProtocol, &gEfiHiiImageDecoderProtocolGuid, NULL,
-                               &handle_count, &handles);
-    if (EFI_ERROR(status) || handle_count == 0) {
-        return EFI_NOT_FOUND;
+    if (size == 0 || size > 0x7fffffffU) {
+        return EFI_BAD_BUFFER_SIZE;
     }
 
-    for (i = 0; i < handle_count; i++) {
-        EFI_HII_IMAGE_DECODER_PROTOCOL *decoder = NULL;
-        EFI_IMAGE_OUTPUT *image = NULL;
-        UINTN pixel_count;
-        UINT8 *rgba;
-        UINTN p;
-
-        status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
-                                   handles[i], &gEfiHiiImageDecoderProtocolGuid, (VOID **)&decoder);
-        if (EFI_ERROR(status) || decoder == NULL || decoder->DecodeImage == NULL) {
-            continue;
-        }
-
-        status = uefi_call_wrapper(decoder->DecodeImage, 5,
-                                   decoder, (VOID *)data, size, &image, FALSE);
-        if (EFI_ERROR(status) || image == NULL || image->Image.Bitmap == NULL) {
-            continue;
-        }
-
-        pixel_count = (UINTN)image->Width * (UINTN)image->Height;
-        rgba = AllocatePool(pixel_count * 4U);
-        if (rgba == NULL) {
-            uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, image);
-            uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, handles);
-            return EFI_OUT_OF_RESOURCES;
-        }
-
-        for (p = 0; p < pixel_count; p++) {
-            EFI_GRAPHICS_OUTPUT_BLT_PIXEL *px = &image->Image.Bitmap[p];
-            rgba[p * 4U + 0] = px->Red;
-            rgba[p * 4U + 1] = px->Green;
-            rgba[p * 4U + 2] = px->Blue;
-            rgba[p * 4U + 3] = 0xFF;
-        }
-
-        *rgba_out = rgba;
-        *w_out = image->Width;
-        *h_out = image->Height;
-        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, image);
-        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, handles);
-        return EFI_SUCCESS;
+    decoded = stbi_load_from_memory((const stbi_uc *)data, (int)size, &w, &h, NULL, 4);
+    if (decoded == NULL || w <= 0 || h <= 0) {
+        return EFI_LOAD_ERROR;
     }
 
-    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, handles);
-    return EFI_UNSUPPORTED;
+    *rgba_out = (UINT8 *)decoded;
+    *w_out = (UINTN)w;
+    *h_out = (UINTN)h;
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS read_file(EFI_FILE_HANDLE root, CONST CHAR16 *path, UINT8 **data_out, UINTN *size_out) {
@@ -456,18 +399,17 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     if (format == IMAGE_FMT_BMP) {
         status = decode_bmp_rgb(file_data, file_size, &rgba, &w, &h);
     } else {
-        if (format == IMAGE_FMT_JPG) Print(L"JPEG detected. Trying firmware image decoders...\r\n");
-        if (format == IMAGE_FMT_PNG) Print(L"PNG detected. Trying firmware image decoders...\r\n");
-        if (format == IMAGE_FMT_GIF) Print(L"GIF detected. Trying firmware image decoders...\r\n");
-        status = decode_with_hii_decoder(SystemTable, file_data, file_size, &rgba, &w, &h);
+        if (format == IMAGE_FMT_JPG) Print(L"JPEG detected. Decoding with stb_image...\r\n");
+        if (format == IMAGE_FMT_PNG) Print(L"PNG detected. Decoding with stb_image...\r\n");
+        if (format == IMAGE_FMT_GIF) Print(L"GIF detected. Decoding with stb_image...\r\n");
+        status = decode_with_stb(file_data, file_size, &rgba, &w, &h);
     }
     FreePool(file_data);
     if (EFI_ERROR(status)) {
         if (format == IMAGE_FMT_BMP) {
             Print(L"Failed to decode BMP: %r\r\n", status);
         } else {
-            Print(L"Failed to decode image via firmware decoder: %r\r\n", status);
-            Print(L"Tip: if firmware does not expose decoders, convert the file to BMP.\r\n");
+            Print(L"Failed to decode image via stb_image: %r\r\n", status);
         }
         wait_for_key(SystemTable, L"Press any key to exit...");
         return status;
@@ -477,20 +419,20 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                                &gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&gop);
     if (EFI_ERROR(status) || gop == NULL) {
         Print(L"Graphics Output Protocol not found: %r\r\n", status);
-        FreePool(rgba);
+        stbi_image_free(rgba);
         wait_for_key(SystemTable, L"Press any key to exit...");
         return status;
     }
 
     status = draw_image_fit(gop, rgba, w, h);
-    FreePool(rgba);
+    stbi_image_free(rgba);
     if (EFI_ERROR(status)) {
         Print(L"Failed to draw image: %r\r\n", status);
         wait_for_key(SystemTable, L"Press any key to exit...");
         return status;
     }
 
-    wait_for_key(SystemTable, L"Image shown. Press any key to exit...");
+    wait_for_key(SystemTable, NULL);
     uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
     uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 0, 0);
     return EFI_SUCCESS;
