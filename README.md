@@ -40,6 +40,7 @@ The current build also produces standalone UEFI utilities:
 - `GOPQUERY.EFI` — GOP capability query tool with per-mode inspection and optional mode switching
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
+- `IMGVIEW.EFI` — graphics file viewer with BMP decoding plus firmware-assisted JPG/PNG/GIF decoding
 
 ## Latest project configuration
 
@@ -83,6 +84,7 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `GOPQUERY.EFI`
 - `HEXVIEW.EFI`
 - `EDIT.EFI`
+- `IMGVIEW.EFI`
 
 `EDIT.EFI` is also copied into `iso_root/` during its build rule so it is immediately runnable in the QEMU FAT drive layout.
 
@@ -104,6 +106,7 @@ run SUNMAP.EFI
 run GOPQUERY.EFI
 run HEXVIEW.EFI
 run EDIT.EFI filename.txt
+run IMGVIEW.EFI image.bmp
 edit filename.txt
 ```
 
@@ -117,6 +120,8 @@ run GOPQUERY.EFI mode 3
 run GOPQUERY.EFI 3
 run GOPQUERY.EFI set 2
 ```
+
+`IMGVIEW.EFI` decodes uncompressed 24-bit/32-bit BMP images internally and uses UEFI firmware image-decoder protocols for JPG/PNG/GIF when available.
 
 ## Build only one app
 

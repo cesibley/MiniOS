@@ -46,8 +46,11 @@ SUNMAP_OBJECTS := sunmap.o
 GOPQUERY_TARGET := GOPQUERY.EFI
 GOPQUERY_INTERMED := gopquery.so
 GOPQUERY_OBJECTS := gopquery.o
+IMGVIEW_TARGET := IMGVIEW.EFI
+IMGVIEW_INTERMED := imgview.so
+IMGVIEW_OBJECTS := imgview.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET)
+all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(IMGVIEW_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -81,10 +84,11 @@ clean:
 	      $(GFXCLOCK_OBJECTS) $(GFXCLOCK_INTERMED) $(GFXCLOCK_TARGET) \
 	      $(SUNMAP_OBJECTS) $(SUNMAP_INTERMED) $(SUNMAP_TARGET) \
 	      $(GOPQUERY_OBJECTS) $(GOPQUERY_INTERMED) $(GOPQUERY_TARGET) \
+	      $(IMGVIEW_OBJECTS) $(IMGVIEW_INTERMED) $(IMGVIEW_TARGET) \
 	      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
 	      iso_root/$(CLOCK_TARGET) iso_root/$(HEX_TARGET) iso_root/$(EDIT_TARGET) \
 	      iso_root/$(GFXCLOCK_TARGET) iso_root/$(SUNMAP_TARGET) \
-	      iso_root/$(GOPQUERY_TARGET) \
+	      iso_root/$(GOPQUERY_TARGET) iso_root/$(IMGVIEW_TARGET) \
 	      iso_root/EFI/BOOT/$(TARGET)
 
 run-info:
@@ -106,6 +110,8 @@ run-info:
 	@echo "  EFI/BOOT/SUNMAP.EFI"
 	@echo "Optional GOP query tool:"
 	@echo "  EFI/BOOT/GOPQUERY.EFI"
+	@echo "Optional image viewer:"
+	@echo "  EFI/BOOT/IMGVIEW.EFI"
 
 pi.o: pi.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -212,3 +218,16 @@ $(GOPQUERY_TARGET): $(GOPQUERY_INTERMED)
 	cp -f $@ iso_root/$@
 
 .PHONY: all clean check run-info
+
+imgview.o: imgview.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(IMGVIEW_INTERMED): $(IMGVIEW_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(IMGVIEW_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(IMGVIEW_TARGET): $(IMGVIEW_INTERMED)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
