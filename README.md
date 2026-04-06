@@ -9,7 +9,7 @@ On startup it prints:
 `MiniOS UEFI shell`
 
 and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
-(e.g. `list`, `read`, `write`, `memmap`, `meminfo`, `run`, `reboot`, `halt`).
+(e.g. `list`, `read`, `write`, `freemem`, `freedisk`, `run`, `reboot`, `halt`).
 
 ### Built-in shell commands
 
@@ -23,9 +23,11 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `del FILE` — delete a file.
 - `mkdir DIR` — create a directory.
 - `rmdir DIR` — remove an empty directory.
-- `memmap` — print the full UEFI memory map descriptors.
-- `meminfo` — print memory totals grouped by UEFI memory type.
+- `freemem` — print total memory and free conventional memory (MiB).
+- `freedisk` — print total and free volume space (MiB).
 - `run EFI_FILE [ARGS]` — load and execute another EFI application, optionally with arguments.
+- `APP.EFI [ARGS]` — shortcut form that auto-runs an EFI app without typing `run`.
+- `APP [ARGS]` — shortcut form that appends `.EFI` automatically, then runs it.
 - `edit FILE` — open `FILE` in the standalone editor (`EDIT.EFI`).
 - `reboot` — reboot the machine via UEFI `ResetSystem`.
 - `halt` — print a halt message and stop execution in an infinite loop.
@@ -36,11 +38,11 @@ The current build also produces standalone UEFI utilities:
 - `GFXTEST.EFI` — queries GOP modes and draws color bars
 - `CLOCKX64.EFI` — prints the current UEFI clock time
 - `GFXCLOCK.EFI` — full-screen analog clock (xclock-style) that updates continuously
-- `SUNMAP.EFI` — world map demo derived from `world.svg` with a real-time day/night illumination overlay; land-mask data is embedded so the EFI binary is self-contained
+- `SUNMAP.EFI` — world map demo with a real-time day/night illumination overlay; land-mask data is embedded so the EFI binary is self-contained
 - `GOPQUERY.EFI` — GOP capability query tool with per-mode inspection and optional mode switching
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
-- `IMGVIEW.EFI` — graphics file viewer with BMP decoding plus firmware-assisted JPG/PNG/GIF decoding
+- `IMGVIEW.EFI` — graphics file viewer with BMP/JPG/PNG/GIF decoding
 
 ## Latest project configuration
 
@@ -110,6 +112,14 @@ run IMGVIEW.EFI image.bmp
 edit filename.txt
 ```
 
+Because shell auto-run shortcuts are enabled, these are equivalent:
+
+```text
+PIX64.EFI
+PIX64
+IMGVIEW corvette.bmp
+```
+
 `SUNMAP.EFI` does not require external assets at runtime; the generated world land mask is embedded directly into the EFI binary.
 
 `GOPQUERY.EFI` supports argument-based query mode:
@@ -123,6 +133,30 @@ run GOPQUERY.EFI set 2
 
 `IMGVIEW.EFI` decodes uncompressed 24-bit/32-bit BMP images internally and uses UEFI firmware image-decoder protocols for JPG/PNG/GIF when available.
 
+## Demo programs and sample files in `iso_root/`
+
+After `make`, all EFI apps are copied into `iso_root/` so they can be launched directly from MiniOS. The repository also includes sample data files there:
+
+- `test.txt` — quick text file for `read`, `write`, `HEXVIEW.EFI`, and `EDIT.EFI`
+- `gettysburg.txt` — larger text sample for `read`/`edit`
+- `corvette.bmp` — BMP sample for `IMGVIEW.EFI` (decoded internally)
+- `corvette.jpg` — JPEG sample for `IMGVIEW.EFI` (via firmware decoder protocols, if available)
+- `NvVars` — OVMF variable store file used by some local VM workflows
+
+Useful demo commands from the MiniOS shell:
+
+```text
+read test.txt
+run HEXVIEW.EFI test.txt
+run EDIT.EFI gettysburg.txt
+run IMGVIEW.EFI corvette.bmp
+run IMGVIEW.EFI corvette.jpg
+run GOPQUERY.EFI
+run GFXTEST.EFI
+run GFXCLOCK.EFI
+run SUNMAP.EFI
+```
+
 ## Build only one app
 
 Example for PI:
@@ -131,11 +165,6 @@ Example for PI:
 make check
 make PIX64.EFI
 ```
-
-## Optional: VirtualBox flow
-
-If you prefer VirtualBox, create a FAT image and copy `BOOTX64.EFI` to `EFI/BOOT/BOOTX64.EFI` as fallback.
-
 ## Troubleshooting
 
 - Missing `elf_x86_64_efi.lds`, `crt0-efi-x86_64.o`, `libefi.a`, or `libgnuefi.a` means `gnu-efi` is not fully installed.
