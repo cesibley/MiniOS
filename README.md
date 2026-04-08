@@ -43,6 +43,7 @@ The current build also produces standalone UEFI utilities:
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
 - `IMGVIEW.EFI` — graphics file viewer with BMP/JPG/PNG/GIF decoding
+- `PLAYVID.EFI` — MPEG-1 (`.mpg`) video player powered by `pl_mpeg.h`
 
 ## Latest project configuration
 
@@ -87,6 +88,7 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `HEXVIEW.EFI`
 - `EDIT.EFI`
 - `IMGVIEW.EFI`
+- `PLAYVID.EFI`
 
 `EDIT.EFI` is also copied into `iso_root/` during its build rule so it is immediately runnable in the QEMU FAT drive layout.
 
@@ -109,6 +111,9 @@ run GOPQUERY.EFI
 run HEXVIEW.EFI
 run EDIT.EFI filename.txt
 run IMGVIEW.EFI image.bmp
+run PLAYVID.EFI video.mpg
+run PLAYVID.EFI noblit:video.mpg
+run PLAYVID.EFI single:video.mpg
 edit filename.txt
 ```
 
@@ -118,6 +123,7 @@ Because shell auto-run shortcuts are enabled, these are equivalent:
 PIX64.EFI
 PIX64
 IMGVIEW corvette.bmp
+PLAYVID sample.mpg
 ```
 
 `SUNMAP.EFI` does not require external assets at runtime; the generated world land mask is embedded directly into the EFI binary.
@@ -151,6 +157,7 @@ run HEXVIEW.EFI test.txt
 run EDIT.EFI gettysburg.txt
 run IMGVIEW.EFI corvette.bmp
 run IMGVIEW.EFI corvette.jpg
+run PLAYVID.EFI demo.mpg
 run GOPQUERY.EFI
 run GFXTEST.EFI
 run GFXCLOCK.EFI
@@ -165,6 +172,7 @@ Example for PI:
 make check
 make PIX64.EFI
 ```
+
 ## Troubleshooting
 
 - Missing `elf_x86_64_efi.lds`, `crt0-efi-x86_64.o`, `libefi.a`, or `libgnuefi.a` means `gnu-efi` is not fully installed.

@@ -15,6 +15,7 @@ CFLAGS    := -I$(EFIINC) -I$(EFIINCARCH) \
              -fpic -fshort-wchar -mno-red-zone \
              -ffreestanding -fno-stack-protector -fno-stack-check \
              -Wall -Wextra
+PLAYVID_CFLAGS := $(CFLAGS) -O2
 
 LDFLAGS   := -nostdlib -znocombreloc -T $(EFILDS) \
              -shared -Bsymbolic
@@ -49,8 +50,11 @@ GOPQUERY_OBJECTS := gopquery.o
 IMGVIEW_TARGET := IMGVIEW.EFI
 IMGVIEW_INTERMED := imgview.so
 IMGVIEW_OBJECTS := imgview.o
+PLAYVID_TARGET := PLAYVID.EFI
+PLAYVID_INTERMED := playvid.so
+PLAYVID_OBJECTS := playvid.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(IMGVIEW_TARGET)
+all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(IMGVIEW_TARGET) $(PLAYVID_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -83,12 +87,14 @@ clean:
 	      $(EDIT_OBJECTS) $(EDIT_INTERMED) $(EDIT_TARGET) \
 	      $(GFXCLOCK_OBJECTS) $(GFXCLOCK_INTERMED) $(GFXCLOCK_TARGET) \
 	      $(SUNMAP_OBJECTS) $(SUNMAP_INTERMED) $(SUNMAP_TARGET) \
-	      $(GOPQUERY_OBJECTS) $(GOPQUERY_INTERMED) $(GOPQUERY_TARGET) \
-	      $(IMGVIEW_OBJECTS) $(IMGVIEW_INTERMED) $(IMGVIEW_TARGET) \
-	      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
+		      $(GOPQUERY_OBJECTS) $(GOPQUERY_INTERMED) $(GOPQUERY_TARGET) \
+		      $(IMGVIEW_OBJECTS) $(IMGVIEW_INTERMED) $(IMGVIEW_TARGET) \
+		      $(PLAYVID_OBJECTS) $(PLAYVID_INTERMED) $(PLAYVID_TARGET) \
+		      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
 	      iso_root/$(CLOCK_TARGET) iso_root/$(HEX_TARGET) iso_root/$(EDIT_TARGET) \
 	      iso_root/$(GFXCLOCK_TARGET) iso_root/$(SUNMAP_TARGET) \
 	      iso_root/$(GOPQUERY_TARGET) iso_root/$(IMGVIEW_TARGET) \
+	      iso_root/$(PLAYVID_TARGET) \
 	      iso_root/EFI/BOOT/$(TARGET)
 
 run-info:
@@ -112,6 +118,8 @@ run-info:
 	@echo "  EFI/BOOT/GOPQUERY.EFI"
 	@echo "Optional image viewer:"
 	@echo "  EFI/BOOT/IMGVIEW.EFI"
+	@echo "Optional MPG video player:"
+	@echo "  EFI/BOOT/PLAYVID.EFI"
 
 pi.o: pi.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -226,6 +234,19 @@ $(IMGVIEW_INTERMED): $(IMGVIEW_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(IMGVIEW_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
 $(IMGVIEW_TARGET): $(IMGVIEW_INTERMED)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
+
+playvid.o: playvid.c
+	$(CC) $(PLAYVID_CFLAGS) -c $< -o $@
+
+$(PLAYVID_INTERMED): $(PLAYVID_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(PLAYVID_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(PLAYVID_TARGET): $(PLAYVID_INTERMED)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
