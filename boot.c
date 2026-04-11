@@ -4,6 +4,7 @@
 
 #define INPUT_MAX 256
 #define FILE_CHUNK 128
+#define HISTORY_SIZE 16
 
 static VOID print_prompt(EFI_SYSTEM_TABLE *SystemTable) {
     uefi_call_wrapper(SystemTable->ConOut->EnableCursor, 2, SystemTable->ConOut, TRUE);
@@ -147,6 +148,7 @@ static VOID shell_help(VOID) {
     Print(L"  edit FILE          - launch EDIT.EFI with FILE preloaded\r\n");
     Print(L"  reboot             - reboot system via UEFI ResetSystem\r\n");
     Print(L"  halt               - stop here forever\r\n");
+    Print(L"\r\nTip: Up/Down browse history, Left/Right move cursor, Ins toggles insert/overwrite.\r\n");
 }
 
 static VOID shell_cls(EFI_SYSTEM_TABLE *SystemTable) {
@@ -849,10 +851,98 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     Print(L"\r\nUnknown command: %s", line);
 }
 
-static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN max_len) {
+
+static VOID set_cursor_from_prompt(EFI_SYSTEM_TABLE *SystemTable,
+                                   UINTN prompt_col,
+                                   UINTN prompt_row,
+                                   UINTN offset) {
+    UINTN cols = 80;
+    UINTN rows = 25;
+    UINTN row;
+    UINTN col;
+    INT32 mode = 0;
+
+    if (SystemTable->ConOut != NULL && SystemTable->ConOut->Mode != NULL) {
+        mode = SystemTable->ConOut->Mode->Mode;
+        if (mode >= 0) {
+            EFI_STATUS status = uefi_call_wrapper(SystemTable->ConOut->QueryMode, 4,
+                                                  SystemTable->ConOut, mode, &cols, &rows);
+            if (EFI_ERROR(status) || cols == 0) {
+                cols = 80;
+                rows = 25;
+            }
+        }
+    }
+
+    row = prompt_row + ((prompt_col + offset) / cols);
+    col = (prompt_col + offset) % cols;
+    if (rows > 0 && row >= rows) {
+        row = rows - 1;
+    }
+    uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, col, row);
+}
+
+static VOID redraw_input(EFI_SYSTEM_TABLE *SystemTable,
+                         UINTN prompt_col,
+                         UINTN prompt_row,
+                         UINTN old_len,
+                         CHAR16 *buffer,
+                         UINTN new_len,
+                         UINTN cursor) {
+    UINTN i;
+
+    set_cursor_from_prompt(SystemTable, prompt_col, prompt_row, 0);
+    if (new_len > 0) Print(L"%s", buffer);
+    if (old_len > new_len) {
+        for (i = 0; i < (old_len - new_len); i++) Print(L" ");
+    }
+    set_cursor_from_prompt(SystemTable, prompt_col, prompt_row, cursor);
+}
+
+static VOID history_add(CHAR16 history[HISTORY_SIZE][INPUT_MAX], UINTN *history_count, CHAR16 *line) {
+    UINTN i;
+
+    if (line == NULL || line[0] == 0) return;
+
+    if (*history_count > 0 && StrCmp(history[*history_count - 1], line) == 0) {
+        return;
+    }
+
+    if (*history_count < HISTORY_SIZE) {
+        StrnCpy(history[*history_count], line, INPUT_MAX - 1);
+        history[*history_count][INPUT_MAX - 1] = 0;
+        (*history_count)++;
+        return;
+    }
+
+    for (i = 1; i < HISTORY_SIZE; i++) {
+        StrCpy(history[i - 1], history[i]);
+    }
+
+    StrnCpy(history[HISTORY_SIZE - 1], line, INPUT_MAX - 1);
+    history[HISTORY_SIZE - 1][INPUT_MAX - 1] = 0;
+}
+static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN max_len,
+                            CHAR16 history[HISTORY_SIZE][INPUT_MAX], UINTN history_count) {
     EFI_INPUT_KEY key;
-    UINTN index = 0;
+    UINTN len = 0;
+    UINTN cursor = 0;
     UINTN event_index;
+    INTN history_index = -1;
+    INTN insert_mode = 1;
+    UINTN prompt_col;
+    UINTN prompt_row;
+    UINTN rendered_len = 0;
+    CHAR16 scratch[INPUT_MAX];
+
+    scratch[0] = 0;
+    buffer[0] = 0;
+    prompt_col = 0;
+    prompt_row = 0;
+    if (SystemTable->ConOut != NULL && SystemTable->ConOut->Mode != NULL) {
+        prompt_col = (UINTN)SystemTable->ConOut->Mode->CursorColumn;
+        prompt_row = (UINTN)SystemTable->ConOut->Mode->CursorRow;
+    }
 
     while (1) {
         uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3,
@@ -864,25 +954,120 @@ static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN
         }
 
         if (key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
-            buffer[index] = 0;
+            buffer[len] = 0;
             Print(L"\r\n");
             return EFI_SUCCESS;
         }
 
         if (key.UnicodeChar == CHAR_BACKSPACE) {
-            if (index > 0) {
-                index--;
-                buffer[index] = 0;
-                Print(L"\b \b");
+            if (cursor > 0) {
+                UINTN i;
+                UINTN old_len = len;
+
+                for (i = cursor - 1; i < len - 1; i++) {
+                    buffer[i] = buffer[i + 1];
+                }
+                len--;
+                cursor--;
+                buffer[len] = 0;
+                redraw_input(SystemTable, prompt_col, prompt_row, old_len, buffer, len, cursor);
+                rendered_len = len;
             }
             continue;
         }
 
+        if (key.ScanCode == SCAN_LEFT) {
+            if (cursor > 0) {
+                cursor--;
+                redraw_input(SystemTable, prompt_col, prompt_row, rendered_len, buffer, len, cursor);
+            }
+            continue;
+        }
+
+        if (key.ScanCode == SCAN_RIGHT) {
+            if (cursor < len) {
+                cursor++;
+                redraw_input(SystemTable, prompt_col, prompt_row, rendered_len, buffer, len, cursor);
+            }
+            continue;
+        }
+
+        if (key.ScanCode == SCAN_INSERT) {
+            insert_mode = !insert_mode;
+            continue;
+        }
+
+        if (key.ScanCode == SCAN_UP) {
+            UINTN old_len = len;
+
+            if (history_count == 0) continue;
+
+            if (history_index < 0) {
+                StrnCpy(scratch, buffer, INPUT_MAX - 1);
+                scratch[INPUT_MAX - 1] = 0;
+                history_index = (INTN)history_count - 1;
+            } else if (history_index > 0) {
+                history_index--;
+            }
+
+            StrnCpy(buffer, history[history_index], max_len - 1);
+            buffer[max_len - 1] = 0;
+            len = StrLen(buffer);
+            cursor = len;
+            redraw_input(SystemTable, prompt_col, prompt_row, old_len, buffer, len, cursor);
+            rendered_len = len;
+            continue;
+        }
+
+        if (key.ScanCode == SCAN_DOWN) {
+            UINTN old_len = len;
+
+            if (history_count == 0 || history_index < 0) continue;
+
+            if (history_index < (INTN)history_count - 1) {
+                history_index++;
+                StrnCpy(buffer, history[history_index], max_len - 1);
+                buffer[max_len - 1] = 0;
+            } else {
+                history_index = -1;
+                StrnCpy(buffer, scratch, max_len - 1);
+                buffer[max_len - 1] = 0;
+            }
+
+            len = StrLen(buffer);
+            cursor = len;
+            redraw_input(SystemTable, prompt_col, prompt_row, old_len, buffer, len, cursor);
+            rendered_len = len;
+            continue;
+        }
+
         if (key.UnicodeChar >= 32 && key.UnicodeChar < 127) {
-            if (index < max_len - 1) {
-                buffer[index++] = key.UnicodeChar;
-                buffer[index] = 0;
-                Print(L"%c", key.UnicodeChar);
+            UINTN old_len = len;
+
+            if (insert_mode) {
+                UINTN i;
+                if (len < max_len - 1) {
+                    for (i = len; i > cursor; i--) {
+                        buffer[i] = buffer[i - 1];
+                    }
+                    buffer[cursor] = key.UnicodeChar;
+                    len++;
+                    cursor++;
+                    buffer[len] = 0;
+                    redraw_input(SystemTable, prompt_col, prompt_row, old_len, buffer, len, cursor);
+                    rendered_len = len;
+                }
+            } else {
+                if (cursor < max_len - 1) {
+                    if (cursor == len) {
+                        len++;
+                    }
+                    buffer[cursor] = key.UnicodeChar;
+                    cursor++;
+                    buffer[len] = 0;
+                    redraw_input(SystemTable, prompt_col, prompt_row, old_len, buffer, len, cursor);
+                    rendered_len = len;
+                }
             }
             continue;
         }
@@ -891,7 +1076,10 @@ static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     CHAR16 line[INPUT_MAX];
+    CHAR16 history_line[INPUT_MAX];
     CHAR16 cwd[INPUT_MAX];
+    CHAR16 history[HISTORY_SIZE][INPUT_MAX];
+    UINTN history_count = 0;
 
     InitializeLib(ImageHandle, SystemTable);
     disable_uefi_watchdog(SystemTable);
@@ -904,8 +1092,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     while (1) {
         line[0] = 0;
         print_prompt(SystemTable);
-        read_line(SystemTable, line, INPUT_MAX);
+        read_line(SystemTable, line, INPUT_MAX, history, history_count);
+        StrnCpy(history_line, line, INPUT_MAX - 1);
+        history_line[INPUT_MAX - 1] = 0;
         execute_command(line, cwd, ImageHandle, SystemTable);
+        history_add(history, &history_count, history_line);
     }
 
     return EFI_SUCCESS;
