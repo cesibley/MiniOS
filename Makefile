@@ -20,35 +20,36 @@ LDFLAGS   := -nostdlib -znocombreloc -T $(EFILDS) \
              -shared -Bsymbolic
 
 TARGET    := BOOTX64.EFI
-INTERMED  := boot.so
-OBJECTS   := boot.o
+BUILD_DIR := build
+INTERMED  := $(BUILD_DIR)/boot.so
+OBJECTS   := $(BUILD_DIR)/boot.o
 PI_TARGET := PIX64.EFI
-PI_INTERMED := pi.so
-PI_OBJECTS := pi.o
+PI_INTERMED := $(BUILD_DIR)/pi.so
+PI_OBJECTS := $(BUILD_DIR)/pi.o
 GFX_TARGET := GFXTEST.EFI
-GFX_INTERMED := gfxtest.so
-GFX_OBJECTS := gfxtest.o
+GFX_INTERMED := $(BUILD_DIR)/gfxtest.so
+GFX_OBJECTS := $(BUILD_DIR)/gfxtest.o
 CLOCK_TARGET := CLOCKX64.EFI
-CLOCK_INTERMED := clock.so
-CLOCK_OBJECTS := clock.o
+CLOCK_INTERMED := $(BUILD_DIR)/clock.so
+CLOCK_OBJECTS := $(BUILD_DIR)/clock.o
 HEX_TARGET := HEXVIEW.EFI
-HEX_INTERMED := hexview.so
-HEX_OBJECTS := hexview.o
+HEX_INTERMED := $(BUILD_DIR)/hexview.so
+HEX_OBJECTS := $(BUILD_DIR)/hexview.o
 EDIT_TARGET := EDIT.EFI
-EDIT_INTERMED := textedit.so
-EDIT_OBJECTS := textedit.o
+EDIT_INTERMED := $(BUILD_DIR)/textedit.so
+EDIT_OBJECTS := $(BUILD_DIR)/textedit.o
 GFXCLOCK_TARGET := GFXCLOCK.EFI
-GFXCLOCK_INTERMED := gfxclock.so
-GFXCLOCK_OBJECTS := gfxclock.o
+GFXCLOCK_INTERMED := $(BUILD_DIR)/gfxclock.so
+GFXCLOCK_OBJECTS := $(BUILD_DIR)/gfxclock.o
 SUNMAP_TARGET := SUNMAP.EFI
-SUNMAP_INTERMED := sunmap.so
-SUNMAP_OBJECTS := sunmap.o
+SUNMAP_INTERMED := $(BUILD_DIR)/sunmap.so
+SUNMAP_OBJECTS := $(BUILD_DIR)/sunmap.o
 GOPQUERY_TARGET := GOPQUERY.EFI
-GOPQUERY_INTERMED := gopquery.so
-GOPQUERY_OBJECTS := gopquery.o
+GOPQUERY_INTERMED := $(BUILD_DIR)/gopquery.so
+GOPQUERY_OBJECTS := $(BUILD_DIR)/gopquery.o
 IMGVIEW_TARGET := IMGVIEW.EFI
-IMGVIEW_INTERMED := imgview.so
-IMGVIEW_OBJECTS := imgview.o
+IMGVIEW_INTERMED := $(BUILD_DIR)/imgview.so
+IMGVIEW_OBJECTS := $(BUILD_DIR)/imgview.o
 
 all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(IMGVIEW_TARGET)
 
@@ -59,7 +60,10 @@ check:
 	@test -n "$(LIBEFI)" || (echo "Missing libefi.a. Install gnu-efi."; exit 1)
 	@test -d "$(EFIINC)" || (echo "Missing $(EFIINC). Install gnu-efi development headers."; exit 1)
 
-boot.o: boot.c
+$(BUILD_DIR):
+	mkdir -p $@
+
+$(BUILD_DIR)/boot.o: boot.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(INTERMED): $(OBJECTS)
@@ -75,7 +79,8 @@ $(TARGET): $(INTERMED)
 	cp -f $@ iso_root/EFI/BOOT/$@
 
 clean:
-	rm -f $(OBJECTS) $(INTERMED) $(TARGET) \
+	rm -rf $(BUILD_DIR)
+	rm -f $(TARGET) \
 	      $(PI_OBJECTS) $(PI_INTERMED) $(PI_TARGET) \
 	      $(GFX_OBJECTS) $(GFX_INTERMED) $(GFX_TARGET) \
 	      $(CLOCK_OBJECTS) $(CLOCK_INTERMED) $(CLOCK_TARGET) \
@@ -113,7 +118,7 @@ run-info:
 	@echo "Optional image viewer:"
 	@echo "  EFI/BOOT/IMGVIEW.EFI"
 
-pi.o: pi.c
+$(BUILD_DIR)/pi.o: pi.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(PI_INTERMED): $(PI_OBJECTS)
@@ -126,7 +131,7 @@ $(PI_TARGET): $(PI_INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 	cp -f $@ iso_root/$@
 
-gfxtest.o: gfxtest.c
+$(BUILD_DIR)/gfxtest.o: gfxtest.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(GFX_INTERMED): $(GFX_OBJECTS)
@@ -139,7 +144,7 @@ $(GFX_TARGET): $(GFX_INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 	cp -f $@ iso_root/$@
 
-clock.o: clock.c
+$(BUILD_DIR)/clock.o: clock.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(CLOCK_INTERMED): $(CLOCK_OBJECTS)
@@ -152,7 +157,7 @@ $(CLOCK_TARGET): $(CLOCK_INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 	cp -f $@ iso_root/$@
 
-hexview.o: hexview.c
+$(BUILD_DIR)/hexview.o: hexview.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(HEX_INTERMED): $(HEX_OBJECTS)
@@ -165,7 +170,7 @@ $(HEX_TARGET): $(HEX_INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 	cp -f $@ iso_root/$@
 
-textedit.o: textedit.c
+$(BUILD_DIR)/textedit.o: textedit.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(EDIT_INTERMED): $(EDIT_OBJECTS)
@@ -178,7 +183,7 @@ $(EDIT_TARGET): $(EDIT_INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 	cp -f $@ iso_root/$@
 
-gfxclock.o: gfxclock.c
+$(BUILD_DIR)/gfxclock.o: gfxclock.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(GFXCLOCK_INTERMED): $(GFXCLOCK_OBJECTS)
@@ -191,7 +196,7 @@ $(GFXCLOCK_TARGET): $(GFXCLOCK_INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 	cp -f $@ iso_root/$@
 
-sunmap.o: sunmap.c
+$(BUILD_DIR)/sunmap.o: sunmap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(SUNMAP_INTERMED): $(SUNMAP_OBJECTS)
@@ -204,7 +209,7 @@ $(SUNMAP_TARGET): $(SUNMAP_INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 	cp -f $@ iso_root/$@
 
-gopquery.o: gopquery.c
+$(BUILD_DIR)/gopquery.o: gopquery.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(GOPQUERY_INTERMED): $(GOPQUERY_OBJECTS)
@@ -219,7 +224,7 @@ $(GOPQUERY_TARGET): $(GOPQUERY_INTERMED)
 
 .PHONY: all clean check run-info
 
-imgview.o: imgview.c
+$(BUILD_DIR)/imgview.o: imgview.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(IMGVIEW_INTERMED): $(IMGVIEW_OBJECTS)
