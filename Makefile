@@ -23,7 +23,7 @@ TARGET    := BOOTX64.EFI
 BUILD_DIR := build
 INTERMED  := $(BUILD_DIR)/boot.so
 OBJECTS   := $(BUILD_DIR)/boot.o
-PI_TARGET := PIX64.EFI
+PI_TARGET := CALCPI.EFI
 PI_INTERMED := $(BUILD_DIR)/pi.so
 PI_OBJECTS := $(BUILD_DIR)/pi.o
 GFX_TARGET := GFXTEST.EFI
@@ -32,10 +32,10 @@ GFX_OBJECTS := $(BUILD_DIR)/gfxtest.o
 CLOCK_TARGET := CLOCKX64.EFI
 CLOCK_INTERMED := $(BUILD_DIR)/clock.so
 CLOCK_OBJECTS := $(BUILD_DIR)/clock.o
-HEX_TARGET := HEXVIEW.EFI
+HEX_TARGET := VIEWHEX.EFI
 HEX_INTERMED := $(BUILD_DIR)/hexview.so
 HEX_OBJECTS := $(BUILD_DIR)/hexview.o
-EDIT_TARGET := EDIT.EFI
+EDIT_TARGET := EDITTEXT.EFI
 EDIT_INTERMED := $(BUILD_DIR)/textedit.so
 EDIT_OBJECTS := $(BUILD_DIR)/textedit.o
 GFXCLOCK_TARGET := GFXCLOCK.EFI
@@ -47,7 +47,7 @@ SUNMAP_OBJECTS := $(BUILD_DIR)/sunmap.o
 GOPQUERY_TARGET := GOPQUERY.EFI
 GOPQUERY_INTERMED := $(BUILD_DIR)/gopquery.so
 GOPQUERY_OBJECTS := $(BUILD_DIR)/gopquery.o
-IMGVIEW_TARGET := IMGVIEW.EFI
+IMGVIEW_TARGET := VIEWIMG.EFI
 IMGVIEW_INTERMED := $(BUILD_DIR)/imgview.so
 IMGVIEW_OBJECTS := $(BUILD_DIR)/imgview.o
 
@@ -100,15 +100,15 @@ run-info:
 	@echo "Copy $(TARGET) to:"
 	@echo "  EFI/BOOT/BOOTX64.EFI"
 	@echo "Optional PI tool:"
-	@echo "  EFI/BOOT/PIX64.EFI"
+	@echo "  EFI/BOOT/CALCPI.EFI"
 	@echo "Optional graphics tool:"
 	@echo "  EFI/BOOT/GFXTEST.EFI"
 	@echo "Optional clock tool:"
 	@echo "  EFI/BOOT/CLOCKX64.EFI"
 	@echo "Optional hex viewer:"
-	@echo "  EFI/BOOT/HEXVIEW.EFI"
+	@echo "  EFI/BOOT/VIEWHEX.EFI"
 	@echo "Optional text editor:"
-	@echo "  EFI/BOOT/EDIT.EFI"
+	@echo "  EFI/BOOT/EDITTEXT.EFI"
 	@echo "Optional full-screen graphics clock:"
 	@echo "  EFI/BOOT/GFXCLOCK.EFI"
 	@echo "Optional world illumination map demo:"
@@ -116,7 +116,7 @@ run-info:
 	@echo "Optional GOP query tool:"
 	@echo "  EFI/BOOT/GOPQUERY.EFI"
 	@echo "Optional image viewer:"
-	@echo "  EFI/BOOT/IMGVIEW.EFI"
+	@echo "  EFI/BOOT/VIEWIMG.EFI"
 
 $(BUILD_DIR)/pi.o: pi.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
