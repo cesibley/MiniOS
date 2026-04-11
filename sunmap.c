@@ -7,6 +7,9 @@
 #define TWILIGHT_COS_X1000 -120
 #define MINUTES_PER_DAY 1440
 #define SECONDS_PER_DAY 86400
+#define SUNMAP_DECLINATION_GAIN_X100 100
+#define SUNMAP_TERMINATOR_TERM1_GAIN_X100 35
+#define SUNMAP_TERMINATOR_WAVE_GAIN_X100 10000
 /*
  * Match gfxclock fallback behavior when firmware does not provide timezone.
  * Positive values are east of UTC; 420 means UTC-7 local display.
@@ -133,7 +136,16 @@ static INTN sun_declination_deg(const EFI_TIME *utc_now) {
     INTN n = day_of_year(utc_now->Year, utc_now->Month, utc_now->Day);
     /* decl ~= -23.44 * cos(360*(N+10)/365) */
     INTN arg = ((n + 10) * 360) / 365;
-    return (-2344 * cos_deg_x10000(arg)) / 10000;
+    INTN decl = (-2344 * cos_deg_x10000(arg)) / 10000;
+
+    /* Keep physical declination; wave exaggeration is handled separately. */
+    decl = (decl * SUNMAP_DECLINATION_GAIN_X100) / 100;
+    if (decl > 89) {
+        decl = 89;
+    } else if (decl < -89) {
+        decl = -89;
+    }
+    return decl;
 }
 
 static INTN sun_longitude_deg_x10(const EFI_TIME *utc_now) {
@@ -171,7 +183,21 @@ static INTN cos_solar_zenith_x1000(INTN lat_deg, INTN lon_deg, INTN subsolar_lat
     INTN cos_dlon = cos_deg_x10000(dlon);
     INT64 term1 = (INT64)sin_lat * (INT64)sin_dec;
     INT64 term2 = ((INT64)cos_lat * (INT64)cos_dec / 10000) * (INT64)cos_dlon;
-    INT64 c = (term1 + term2) / 10000;
+    INT64 c;
+
+    /*
+     * Artistic shaping:
+     * - suppress latitude-bias term (term1) that flattens the line
+     * - strongly boost longitude cosine wave (term2) to span map height
+     */
+    term1 = (term1 * SUNMAP_TERMINATOR_TERM1_GAIN_X100) / 100;
+    term2 = (term2 * SUNMAP_TERMINATOR_WAVE_GAIN_X100) / 100;
+    c = (term1 + term2) / 10000;
+    if (c > 10000) {
+        c = 10000;
+    } else if (c < -10000) {
+        c = -10000;
+    }
 
     return (INTN)(c / 10);
 }
@@ -386,7 +412,8 @@ static VOID render_frame(EFI_GRAPHICS_OUTPUT_BLT_PIXEL *frame,
                                                    subsolar_lat_deg,
                                                    subsolar_lon_x10 / 10);
                 BOOLEAN land = is_land(lon_x10, lat_x10);
-                INTN day_strength = -cosz;
+                /* cosz > 0 means sun above horizon (day), cosz < 0 means night. */
+                INTN day_strength = cosz;
                 INTN brightness;
                 INTN contrast_brightness;
 
