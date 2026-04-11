@@ -373,6 +373,9 @@ static VOID format_time_line(CHAR8 *out, CONST CHAR8 *label, CONST EFI_TIME *t) 
     out[12] = '\0';
 }
 
+static CONST CHAR8 kUtcLabel[] = {'U', 'T', 'C', '\0'};
+static CONST CHAR8 kLocalLabel[] = {'L', 'O', 'C', '\0'};
+
 static VOID render_frame(EFI_GRAPHICS_OUTPUT_BLT_PIXEL *frame,
                          UINTN width,
                          UINTN height,
@@ -472,8 +475,8 @@ static VOID render_frame(EFI_GRAPHICS_OUTPUT_BLT_PIXEL *frame,
         UINTN panel_x = x_off + 8;
         UINTN panel_y = y_off + 8;
 
-        format_time_line(utc_line, "UTC", utc_now);
-        format_time_line(local_line, "LOC", local_now);
+        format_time_line(utc_line, kUtcLabel, utc_now);
+        format_time_line(local_line, kLocalLabel, local_now);
 
         fill_rect(frame, width, height, panel_x, panel_y, text_w + 8, text_h + 8, 0, 0, 0);
         draw_text(frame, width, height, panel_x + 4, panel_y + 4, utc_line, scale, 255, 255, 255);

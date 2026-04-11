@@ -7,7 +7,7 @@
 #define STBI_NO_HDR
 #define STBI_NO_THREAD_LOCALS
 #define STBI_MALLOC(sz) AllocatePool((UINTN)(sz))
-#define STBI_REALLOC_SIZED(p, oldsz, newsz) ReallocatePool((UINTN)(oldsz), (UINTN)(newsz), (p))
+#define STBI_REALLOC_SIZED(p, oldsz, newsz) ReallocatePool((p), (UINTN)(oldsz), (UINTN)(newsz))
 #define STBI_FREE(p) FreePool((p))
 #define STBI_ASSERT(x) ((void)0)
 #define STB_IMAGE_IMPLEMENTATION
