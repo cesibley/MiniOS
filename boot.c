@@ -34,6 +34,22 @@ static INTN has_efi_ext(CHAR16 *name) {
            (name[len - 1] == L'i' || name[len - 1] == L'I');
 }
 
+static INTN is_meta_suffix(CHAR16 *name) {
+    UINTN len = StrLen(name);
+    if (len < 5) return 0;
+
+    return (name[len - 5] == L'.') &&
+           (name[len - 4] == L'm' || name[len - 4] == L'M') &&
+           (name[len - 3] == L'e' || name[len - 3] == L'E') &&
+           (name[len - 2] == L't' || name[len - 2] == L'T') &&
+           (name[len - 1] == L'a' || name[len - 1] == L'A');
+}
+
+static INTN is_hidden_meta_file(CHAR16 *name) {
+    if (name == NULL || name[0] != L'.') return 0;
+    return is_meta_suffix(name);
+}
+
 static CHAR16 *skip_spaces(CHAR16 *s) {
     while (*s == L' ') s++;
     return s;
@@ -127,6 +143,168 @@ static EFI_STATUS open_root(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTabl
 
     status = uefi_call_wrapper(fs->OpenVolume, 2, fs, root);
     return status;
+}
+
+static CHAR16 *path_basename(CHAR16 *path) {
+    CHAR16 *base = path;
+    while (*path) {
+        if (is_path_sep(*path)) {
+            base = path + 1;
+        }
+        path++;
+    }
+    return base;
+}
+
+static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_path_len) {
+    CHAR16 dir_part[INPUT_MAX];
+    CHAR16 *base;
+    UINTN i;
+    UINTN slash_pos = 0;
+    UINTN len;
+
+    if (meta_path_len == 0) return;
+    meta_path[0] = 0;
+
+    if (file_path == NULL || *file_path == 0) return;
+
+    len = StrLen(file_path);
+    for (i = 0; i < len; i++) {
+        if (is_path_sep(file_path[i])) slash_pos = i;
+    }
+
+    if (slash_pos == 0) {
+        StrCpy(dir_part, L"\\");
+    } else {
+        if (slash_pos >= INPUT_MAX) slash_pos = INPUT_MAX - 1;
+        for (i = 0; i < slash_pos; i++) dir_part[i] = file_path[i];
+        dir_part[slash_pos] = 0;
+    }
+
+    base = path_basename(file_path);
+    if (StrCmp(dir_part, L"\\") == 0) {
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.%s.meta", base);
+    } else {
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"%s\\.%s.meta", dir_part, base);
+    }
+}
+
+static CHAR8 ascii_upcase(CHAR8 c) {
+    if (c >= 'a' && c <= 'z') return (CHAR8)(c - ('a' - 'A'));
+    return c;
+}
+
+static INTN ascii_starts_with_key(CHAR8 *s, CHAR8 *key) {
+    while (*key) {
+        if (ascii_upcase(*s) != ascii_upcase(*key)) return 0;
+        s++;
+        key++;
+    }
+    return 1;
+}
+
+static VOID parse_meta_line(CHAR8 *line, CHAR8 *type_out, UINTN type_len, CHAR8 *desc_out, UINTN desc_len) {
+    CHAR8 *value;
+    UINTN i;
+
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line == 0) return;
+
+    if (ascii_starts_with_key(line, "TYPE")) {
+        value = line + 4;
+        while (*value == ' ' || *value == '\t' || *value == ':' || *value == '=') value++;
+        for (i = 0; i + 1 < type_len && value[i] && value[i] != '\r' && value[i] != '\n'; i++) {
+            type_out[i] = value[i];
+        }
+        type_out[i] = 0;
+    } else if (ascii_starts_with_key(line, "DESC")) {
+        value = line + 4;
+        while (*value == ' ' || *value == '\t' || *value == ':' || *value == '=') value++;
+        for (i = 0; i + 1 < desc_len && value[i] && value[i] != '\r' && value[i] != '\n'; i++) {
+            desc_out[i] = value[i];
+        }
+        desc_out[i] = 0;
+    }
+}
+
+static VOID load_meta_for_file(CHAR16 *file_path, EFI_FILE_HANDLE root, EFI_SYSTEM_TABLE *SystemTable,
+                               CHAR8 *type_out, UINTN type_len, CHAR8 *desc_out, UINTN desc_len) {
+    CHAR16 meta_path[INPUT_MAX];
+    EFI_FILE_HANDLE meta = NULL;
+    EFI_STATUS status;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN info_size = sizeof(info_buf);
+    UINTN read_size;
+    CHAR8 *buf = NULL;
+    UINTN i;
+    UINTN line_start = 0;
+
+    if (type_len > 0) type_out[0] = 0;
+    if (desc_len > 0) desc_out[0] = 0;
+
+    if (file_path == NULL || *file_path == 0) return;
+    if (is_hidden_meta_file(path_basename(file_path))) return;
+
+    build_meta_path(file_path, meta_path, INPUT_MAX);
+
+    status = uefi_call_wrapper(root->Open, 5, root, &meta, meta_path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) return;
+
+    status = uefi_call_wrapper(meta->GetInfo, 4, meta, &GenericFileInfo, &info_size, info);
+    if (EFI_ERROR(status) || info->FileSize == 0 || info->FileSize > 4096) {
+        uefi_call_wrapper(meta->Close, 1, meta);
+        return;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, (UINTN)info->FileSize + 1, (VOID **)&buf);
+    if (EFI_ERROR(status) || buf == NULL) {
+        uefi_call_wrapper(meta->Close, 1, meta);
+        return;
+    }
+
+    read_size = (UINTN)info->FileSize;
+    status = uefi_call_wrapper(meta->Read, 3, meta, &read_size, buf);
+    if (!EFI_ERROR(status) && read_size > 0) {
+        buf[read_size] = 0;
+        for (i = 0; i <= read_size; i++) {
+            if (buf[i] == '\n' || buf[i] == 0) {
+                CHAR8 saved = buf[i];
+                buf[i] = 0;
+                parse_meta_line(&buf[line_start], type_out, type_len, desc_out, desc_len);
+                buf[i] = saved;
+                line_start = i + 1;
+            }
+        }
+    }
+
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, buf);
+    uefi_call_wrapper(meta->Close, 1, meta);
+}
+
+static VOID print_padded_name(CHAR16 *name, UINTN width) {
+    UINTN i = 0;
+    while (name[i] != 0 && i < width) {
+        Print(L"%c", name[i]);
+        i++;
+    }
+    while (i < width) {
+        Print(L" ");
+        i++;
+    }
+}
+
+static VOID print_padded_ascii(CHAR8 *text, UINTN width) {
+    UINTN i = 0;
+    while (text != NULL && text[i] != 0 && i < width) {
+        Print(L"%c", (CHAR16)text[i]);
+        i++;
+    }
+    while (i < width) {
+        Print(L" ");
+        i++;
+    }
 }
 
 static VOID shell_help(VOID) {
@@ -263,17 +441,25 @@ static VOID shell_freedisk(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     uefi_call_wrapper(root->Close, 1, root);
 }
 
-static VOID print_file_info_line(EFI_FILE_INFO *info) {
+static VOID print_file_info_line(EFI_FILE_INFO *info, CHAR8 *type_meta, CHAR8 *desc_meta) {
     EFI_TIME *modified = &info->ModificationTime;
     if (info->Attribute & EFI_FILE_DIRECTORY) {
-        Print(L"\r\n<DIR>      %04d-%02d-%02d %02d:%02d %s",
+        Print(L"\r\n<DIR>      %04d-%02d-%02d %02d:%02d ",
               modified->Year, modified->Month, modified->Day,
-              modified->Hour, modified->Minute, info->FileName);
+              modified->Hour, modified->Minute);
+        print_padded_name(info->FileName, 15);
     } else {
-        Print(L"\r\n%10lu %04d-%02d-%02d %02d:%02d %s",
+        Print(L"\r\n%10lu %04d-%02d-%02d %02d:%02d ",
               info->FileSize,
               modified->Year, modified->Month, modified->Day,
-              modified->Hour, modified->Minute, info->FileName);
+              modified->Hour, modified->Minute);
+        print_padded_name(info->FileName, 15);
+        Print(L" | ");
+        print_padded_ascii(type_meta, 10);
+        Print(L" | ");
+        if (desc_meta != NULL && desc_meta[0] != 0) {
+            Print(L"%a", desc_meta);
+        }
     }
 }
 
@@ -285,6 +471,9 @@ static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
     EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
     UINTN size;
     CHAR16 *target = path;
+    CHAR16 entry_path[INPUT_MAX];
+    CHAR8 type_meta[64];
+    CHAR8 desc_meta[160];
 
     status = open_root(ImageHandle, SystemTable, &root);
     if (EFI_ERROR(status)) {
@@ -313,7 +502,14 @@ static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
     }
 
     if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
-        print_file_info_line(info);
+        if (target != NULL && is_hidden_meta_file(path_basename(target))) {
+            Print(L"\r\nHidden metadata files are not shown.");
+            if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
+            uefi_call_wrapper(root->Close, 1, root);
+            return;
+        }
+        load_meta_for_file(target, root, SystemTable, type_meta, sizeof(type_meta), desc_meta, sizeof(desc_meta));
+        print_file_info_line(info, type_meta, desc_meta);
         if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
         uefi_call_wrapper(root->Close, 1, root);
         return;
@@ -337,7 +533,21 @@ static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
         if (size == 0) {
             break;
         }
-        print_file_info_line(info);
+        if (is_hidden_meta_file(info->FileName)) {
+            continue;
+        }
+        if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
+            if (target == NULL || *target == 0 || StrCmp(target, L"\\") == 0) {
+                SPrint(entry_path, sizeof(entry_path), L"\\%s", info->FileName);
+            } else {
+                SPrint(entry_path, sizeof(entry_path), L"%s\\%s", target, info->FileName);
+            }
+            load_meta_for_file(entry_path, root, SystemTable, type_meta, sizeof(type_meta), desc_meta, sizeof(desc_meta));
+        } else {
+            type_meta[0] = 0;
+            desc_meta[0] = 0;
+        }
+        print_file_info_line(info, type_meta, desc_meta);
     }
 
     if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
