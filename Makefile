@@ -50,8 +50,11 @@ GOPQUERY_OBJECTS := $(BUILD_DIR)/gopquery.o
 IMGVIEW_TARGET := VIEWIMG.EFI
 IMGVIEW_INTERMED := $(BUILD_DIR)/imgview.so
 IMGVIEW_OBJECTS := $(BUILD_DIR)/imgview.o
+VIEW_TARGET := VIEW.EFI
+VIEW_INTERMED := $(BUILD_DIR)/view.so
+VIEW_OBJECTS := $(BUILD_DIR)/view.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(IMGVIEW_TARGET)
+all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(IMGVIEW_TARGET) $(VIEW_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -90,10 +93,11 @@ clean:
 	      $(SUNMAP_OBJECTS) $(SUNMAP_INTERMED) $(SUNMAP_TARGET) \
 	      $(GOPQUERY_OBJECTS) $(GOPQUERY_INTERMED) $(GOPQUERY_TARGET) \
 	      $(IMGVIEW_OBJECTS) $(IMGVIEW_INTERMED) $(IMGVIEW_TARGET) \
+	      $(VIEW_OBJECTS) $(VIEW_INTERMED) $(VIEW_TARGET) \
 	      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
 	      iso_root/$(CLOCK_TARGET) iso_root/$(HEX_TARGET) iso_root/$(EDIT_TARGET) \
 	      iso_root/$(GFXCLOCK_TARGET) iso_root/$(SUNMAP_TARGET) \
-	      iso_root/$(GOPQUERY_TARGET) iso_root/$(IMGVIEW_TARGET) \
+	      iso_root/$(GOPQUERY_TARGET) iso_root/$(IMGVIEW_TARGET) iso_root/$(VIEW_TARGET) \
 	      iso_root/EFI/BOOT/$(TARGET)
 
 run-info:
@@ -117,6 +121,8 @@ run-info:
 	@echo "  EFI/BOOT/GOPQUERY.EFI"
 	@echo "Optional image viewer:"
 	@echo "  EFI/BOOT/VIEWIMG.EFI"
+	@echo "Optional universal viewer:"
+	@echo "  EFI/BOOT/VIEW.EFI"
 
 $(BUILD_DIR)/pi.o: pi.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -231,6 +237,19 @@ $(IMGVIEW_INTERMED): $(IMGVIEW_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(IMGVIEW_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
 $(IMGVIEW_TARGET): $(IMGVIEW_INTERMED)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
+
+$(BUILD_DIR)/view.o: view.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(VIEW_INTERMED): $(VIEW_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(VIEW_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(VIEW_TARGET): $(VIEW_INTERMED)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \

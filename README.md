@@ -43,6 +43,7 @@ The current build also produces standalone UEFI utilities:
 - `HEXVIEW.EFI` — prints a hex/ASCII view of a file
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
 - `IMGVIEW.EFI` — graphics file viewer with BMP/JPG/PNG/GIF decoding
+- `VIEW.EFI` — extension-aware universal viewer (`.txt` text, `.jpg/.jpeg/.png/.bmp` image decode via stb_image, otherwise hex)
 
 ## Latest project configuration
 
@@ -87,6 +88,7 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `HEXVIEW.EFI`
 - `EDIT.EFI`
 - `IMGVIEW.EFI`
+- `VIEW.EFI`
 
 `EDIT.EFI` is also copied into `iso_root/` during its build rule so it is immediately runnable in the QEMU FAT drive layout.
 
@@ -109,6 +111,8 @@ run GOPQUERY.EFI
 run HEXVIEW.EFI
 run EDIT.EFI filename.txt
 run IMGVIEW.EFI image.bmp
+run VIEW.EFI file.txt
+run VIEW.EFI -h file.bin
 edit filename.txt
 ```
 
@@ -118,6 +122,7 @@ Because shell auto-run shortcuts are enabled, these are equivalent:
 PIX64.EFI
 PIX64
 IMGVIEW corvette.bmp
+VIEW gettysburg.txt
 ```
 
 `SUNMAP.EFI` does not require external assets at runtime; the generated world land mask is embedded directly into the EFI binary.
