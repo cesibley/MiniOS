@@ -17,7 +17,7 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `cls` — clear the screen and reset cursor position.
 - `echo TEXT` — print `TEXT` exactly as entered.
 - `cd [PATH]` — change the current working directory (uses `\` root by default).
-- `list [PATH]` — list entries for a directory, or metadata for a file path.
+- `list [-m] [PATH]` — list entries for a directory or file path; metadata columns are shown only with `-m`.
 - `read FILE` — display the contents of `FILE`.
 - `write FILE TEXT` — overwrite `FILE` with `TEXT`.
 - `del FILE` — delete a file.
@@ -40,9 +40,7 @@ The current build also produces standalone UEFI utilities:
 - `GFXCLOCK.EFI` — full-screen analog clock (xclock-style) that updates continuously
 - `SUNMAP.EFI` — world map demo with a real-time day/night illumination overlay; land-mask data is embedded so the EFI binary is self-contained
 - `GOPQUERY.EFI` — GOP capability query tool with per-mode inspection and optional mode switching
-- `HEXVIEW.EFI` — prints a hex/ASCII view of a file
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
-- `IMGVIEW.EFI` — graphics file viewer with BMP/JPG/PNG/GIF decoding
 - `VIEW.EFI` — extension-aware universal viewer (`.txt` text, `.jpg/.jpeg/.png/.bmp` image decode via stb_image, otherwise hex)
 
 ## Latest project configuration
@@ -85,9 +83,7 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `GFXCLOCK.EFI`
 - `SUNMAP.EFI`
 - `GOPQUERY.EFI`
-- `HEXVIEW.EFI`
 - `EDIT.EFI`
-- `IMGVIEW.EFI`
 - `VIEW.EFI`
 
 `EDIT.EFI` is also copied into `iso_root/` during its build rule so it is immediately runnable in the QEMU FAT drive layout.
@@ -108,9 +104,7 @@ run CLOCKX64.EFI
 run GFXCLOCK.EFI
 run SUNMAP.EFI
 run GOPQUERY.EFI
-run HEXVIEW.EFI
 run EDIT.EFI filename.txt
-run IMGVIEW.EFI image.bmp
 run VIEW.EFI file.txt
 run VIEW.EFI -h file.bin
 edit filename.txt
@@ -121,7 +115,6 @@ Because shell auto-run shortcuts are enabled, these are equivalent:
 ```text
 PIX64.EFI
 PIX64
-IMGVIEW corvette.bmp
 VIEW gettysburg.txt
 ```
 
@@ -136,26 +129,23 @@ run GOPQUERY.EFI 3
 run GOPQUERY.EFI set 2
 ```
 
-`IMGVIEW.EFI` decodes uncompressed 24-bit/32-bit BMP images internally and uses UEFI firmware image-decoder protocols for JPG/PNG/GIF when available.
-
 ## Demo programs and sample files in `iso_root/`
 
 After `make`, all EFI apps are copied into `iso_root/` so they can be launched directly from MiniOS. The repository also includes sample data files there:
 
-- `test.txt` — quick text file for `read`, `write`, `HEXVIEW.EFI`, and `EDIT.EFI`
+- `test.txt` — quick text file for `read`, `write`, `VIEW.EFI`, and `EDIT.EFI`
 - `gettysburg.txt` — larger text sample for `read`/`edit`
-- `corvette.bmp` — BMP sample for `IMGVIEW.EFI` (decoded internally)
-- `corvette.jpg` — JPEG sample for `IMGVIEW.EFI` (via firmware decoder protocols, if available)
+- `corvette.bmp` — BMP sample for `VIEW.EFI`
+- `corvette.jpg` — JPEG sample for `VIEW.EFI`
 - `NvVars` — OVMF variable store file used by some local VM workflows
 
 Useful demo commands from the MiniOS shell:
 
 ```text
 read test.txt
-run HEXVIEW.EFI test.txt
 run EDIT.EFI gettysburg.txt
-run IMGVIEW.EFI corvette.bmp
-run IMGVIEW.EFI corvette.jpg
+run VIEW.EFI corvette.bmp
+run VIEW.EFI corvette.jpg
 run GOPQUERY.EFI
 run GFXTEST.EFI
 run GFXCLOCK.EFI

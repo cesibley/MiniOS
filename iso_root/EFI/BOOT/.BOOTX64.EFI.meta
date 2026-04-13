@@ -1,0 +1,4 @@
+NAME: BOOTX64.EFI
+TYPE: Executable
+DESC: Metadata for BOOTX64.EFI
+USAGE: Run BOOTX64.EFI from the MiniOS shell

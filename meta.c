@@ -1,0 +1,398 @@
+#include <efi.h>
+#include <efilib.h>
+#include "watchdog.h"
+
+#define INPUT_MAX 260
+#define TOKEN_MAX 64
+#define VALUE_MAX 256
+#define FILE_MAX_SIZE 8192
+
+typedef struct {
+    BOOLEAN add_mode;
+    CHAR16 file_path[INPUT_MAX];
+    CHAR8 key[TOKEN_MAX];
+    CHAR8 value[VALUE_MAX];
+} META_ARGS;
+
+static BOOLEAN is_space(CHAR16 c) {
+    return c == L' ' || c == L'\t' || c == L'\r' || c == L'\n';
+}
+
+static INTN is_path_sep(CHAR16 c) {
+    return c == L'\\' || c == L'/';
+}
+
+static CHAR16 *path_basename(CHAR16 *path) {
+    CHAR16 *base = path;
+    while (*path) {
+        if (is_path_sep(*path)) base = path + 1;
+        path++;
+    }
+    return base;
+}
+
+static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_path_len) {
+    CHAR16 dir_part[INPUT_MAX];
+    CHAR16 *base;
+    UINTN i;
+    UINTN slash_pos = 0;
+    UINTN len;
+
+    if (meta_path_len == 0) return;
+    meta_path[0] = 0;
+
+    if (file_path == NULL || *file_path == 0) return;
+
+    len = StrLen(file_path);
+    for (i = 0; i < len; i++) {
+        if (is_path_sep(file_path[i])) slash_pos = i;
+    }
+
+    if (slash_pos == 0) {
+        StrCpy(dir_part, L"\\");
+    } else {
+        if (slash_pos >= INPUT_MAX) slash_pos = INPUT_MAX - 1;
+        for (i = 0; i < slash_pos; i++) dir_part[i] = file_path[i];
+        dir_part[slash_pos] = 0;
+    }
+
+    base = path_basename(file_path);
+    if (StrCmp(dir_part, L"\\") == 0) {
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.%s.meta", base);
+    } else {
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"%s\\.%s.meta", dir_part, base);
+    }
+}
+
+static EFI_STATUS open_root(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, EFI_FILE_HANDLE *root) {
+    EFI_LOADED_IMAGE *loaded_image;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
+    EFI_STATUS status;
+
+    status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+                               ImageHandle, &LoadedImageProtocol, (VOID **)&loaded_image);
+    if (EFI_ERROR(status)) return status;
+
+    status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+                               loaded_image->DeviceHandle, &FileSystemProtocol, (VOID **)&fs);
+    if (EFI_ERROR(status)) return status;
+
+    return uefi_call_wrapper(fs->OpenVolume, 2, fs, root);
+}
+
+static BOOLEAN next_token(CHAR16 *opt, UINTN n, UINTN *index, CHAR16 *out, UINTN out_len) {
+    UINTN i = *index;
+    UINTN o = 0;
+
+    while (i < n && is_space(opt[i])) i++;
+    if (i >= n || opt[i] == 0) {
+        *index = i;
+        if (out_len > 0) out[0] = 0;
+        return FALSE;
+    }
+
+    if (opt[i] == L'"') {
+        i++;
+        while (i < n && opt[i] != 0 && opt[i] != L'"' && o + 1 < out_len) {
+            out[o++] = opt[i++];
+        }
+        if (i < n && opt[i] == L'"') i++;
+    } else {
+        while (i < n && opt[i] != 0 && !is_space(opt[i]) && o + 1 < out_len) {
+            out[o++] = opt[i++];
+        }
+    }
+
+    out[o] = 0;
+    *index = i;
+    return TRUE;
+}
+
+static VOID to_ascii(CHAR16 *in, CHAR8 *out, UINTN out_len) {
+    UINTN i = 0;
+    if (out_len == 0) return;
+    while (in[i] && i + 1 < out_len) {
+        out[i] = (CHAR8)(in[i] & 0xFF);
+        i++;
+    }
+    out[i] = 0;
+}
+
+static BOOLEAN split_meta_pair(CHAR16 *pair_in, CHAR8 *key_out, UINTN key_len, CHAR8 *value_out, UINTN value_len) {
+    UINTN i = 0;
+    UINTN eq = 0;
+
+    while (pair_in[i] != 0) {
+        if (pair_in[i] == L'=') {
+            eq = i;
+            break;
+        }
+        i++;
+    }
+    if (eq == 0 || pair_in[eq] == 0 || pair_in[eq + 1] == 0) return FALSE;
+
+    {
+        CHAR16 key16[TOKEN_MAX];
+        CHAR16 val16[VALUE_MAX];
+        UINTN k = 0;
+        UINTN v = 0;
+        for (i = 0; i < eq && k + 1 < TOKEN_MAX; i++) key16[k++] = pair_in[i];
+        key16[k] = 0;
+        i = eq + 1;
+        while (pair_in[i] != 0 && v + 1 < VALUE_MAX) val16[v++] = pair_in[i++];
+        val16[v] = 0;
+        to_ascii(key16, key_out, key_len);
+        to_ascii(val16, value_out, value_len);
+    }
+    return key_out[0] != 0 && value_out[0] != 0;
+}
+
+static EFI_STATUS parse_args(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable, META_ARGS *args) {
+    EFI_LOADED_IMAGE *loaded_image = NULL;
+    EFI_STATUS status;
+    CHAR16 *opt;
+    UINTN n;
+    UINTN idx = 0;
+    CHAR16 token[VALUE_MAX];
+
+    args->add_mode = FALSE;
+    args->file_path[0] = 0;
+    args->key[0] = 0;
+    args->value[0] = 0;
+
+    status = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3,
+                               ImageHandle, &LoadedImageProtocol, (VOID **)&loaded_image);
+    if (EFI_ERROR(status) || loaded_image == NULL || loaded_image->LoadOptions == NULL ||
+        loaded_image->LoadOptionsSize == 0) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    opt = (CHAR16 *)loaded_image->LoadOptions;
+    n = loaded_image->LoadOptionsSize / sizeof(CHAR16);
+
+    if (!next_token(opt, n, &idx, token, INPUT_MAX)) return EFI_INVALID_PARAMETER;
+    if (StrCmp(token, L"-a") == 0 || StrCmp(token, L"/a") == 0) {
+        args->add_mode = TRUE;
+        if (!next_token(opt, n, &idx, args->file_path, INPUT_MAX)) return EFI_INVALID_PARAMETER;
+        if (!next_token(opt, n, &idx, token, VALUE_MAX)) return EFI_INVALID_PARAMETER;
+        if (!split_meta_pair(token, args->key, TOKEN_MAX, args->value, VALUE_MAX)) return EFI_INVALID_PARAMETER;
+    } else {
+        StrCpy(args->file_path, token);
+    }
+
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS read_meta_file(EFI_FILE_HANDLE root, CHAR16 *meta_path,
+                                 EFI_SYSTEM_TABLE *SystemTable,
+                                 CHAR8 **buffer_out, UINTN *size_out) {
+    EFI_FILE_HANDLE file = NULL;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN info_size = sizeof(info_buf);
+    EFI_STATUS status;
+    CHAR8 *data;
+    UINTN read_size;
+
+    *buffer_out = NULL;
+    *size_out = 0;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, meta_path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) return status;
+
+    status = uefi_call_wrapper(file->GetInfo, 4, file, &GenericFileInfo, &info_size, info);
+    if (EFI_ERROR(status) || info->FileSize > FILE_MAX_SIZE) {
+        uefi_call_wrapper(file->Close, 1, file);
+        return EFI_LOAD_ERROR;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, (UINTN)info->FileSize + 1, (VOID **)&data);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(file->Close, 1, file);
+        return status;
+    }
+
+    read_size = (UINTN)info->FileSize;
+    status = uefi_call_wrapper(file->Read, 3, file, &read_size, data);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, data);
+        uefi_call_wrapper(file->Close, 1, file);
+        return status;
+    }
+
+    data[read_size] = 0;
+    *buffer_out = data;
+    *size_out = read_size;
+
+    uefi_call_wrapper(file->Close, 1, file);
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS write_meta_file(EFI_FILE_HANDLE root, CHAR16 *meta_path,
+                                  CHAR8 *data, UINTN size) {
+    EFI_FILE_HANDLE file;
+    EFI_STATUS status;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, meta_path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (!EFI_ERROR(status)) {
+        status = uefi_call_wrapper(file->Delete, 1, file);
+        if (EFI_ERROR(status)) return status;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, meta_path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                               0);
+    if (EFI_ERROR(status)) return status;
+
+    status = uefi_call_wrapper(file->Write, 3, file, &size, data);
+    if (!EFI_ERROR(status)) {
+        status = uefi_call_wrapper(file->Flush, 1, file);
+    }
+
+    uefi_call_wrapper(file->Close, 1, file);
+    return status;
+}
+
+static BOOLEAN line_key_matches(CHAR8 *line, UINTN line_len, CHAR8 *key, UINTN key_len) {
+    UINTN i;
+    if (line_len <= key_len) return FALSE;
+    for (i = 0; i < key_len; i++) {
+        if (line[i] != key[i]) return FALSE;
+    }
+    return line[key_len] == '=';
+}
+
+static EFI_STATUS upsert_meta(EFI_FILE_HANDLE root, CHAR16 *meta_path,
+                              EFI_SYSTEM_TABLE *SystemTable,
+                              CHAR8 *key, CHAR8 *value) {
+    CHAR8 *old_buf = NULL;
+    UINTN old_size = 0;
+    EFI_STATUS status;
+    CHAR8 *new_buf;
+    UINTN key_len = AsciiStrLen(key);
+    UINTN value_len = AsciiStrLen(value);
+    UINTN cap;
+    UINTN out = 0;
+    UINTN i = 0;
+    BOOLEAN updated = FALSE;
+
+    status = read_meta_file(root, meta_path, SystemTable, &old_buf, &old_size);
+    if (EFI_ERROR(status) && status != EFI_NOT_FOUND) {
+        return status;
+    }
+
+    cap = old_size + key_len + value_len + 8;
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, cap, (VOID **)&new_buf);
+    if (EFI_ERROR(status)) {
+        if (old_buf != NULL) uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, old_buf);
+        return status;
+    }
+
+    while (i < old_size) {
+        UINTN start = i;
+        UINTN end;
+        while (i < old_size && old_buf[i] != '\n') i++;
+        end = i;
+        if (i < old_size && old_buf[i] == '\n') i++;
+
+        if (end > start && old_buf[end - 1] == '\r') end--;
+        if (end > start && line_key_matches(&old_buf[start], end - start, key, key_len)) {
+            UINTN k;
+            for (k = 0; k < key_len; k++) new_buf[out++] = key[k];
+            new_buf[out++] = '=';
+            for (k = 0; k < value_len; k++) new_buf[out++] = value[k];
+            new_buf[out++] = '\n';
+            updated = TRUE;
+        } else {
+            UINTN k;
+            for (k = start; k < (i <= old_size ? i : old_size); k++) new_buf[out++] = old_buf[k];
+            if (i == old_size && (out == 0 || new_buf[out - 1] != '\n')) new_buf[out++] = '\n';
+        }
+    }
+
+    if (!updated) {
+        UINTN k;
+        for (k = 0; k < key_len; k++) new_buf[out++] = key[k];
+        new_buf[out++] = '=';
+        for (k = 0; k < value_len; k++) new_buf[out++] = value[k];
+        new_buf[out++] = '\n';
+    }
+
+    status = write_meta_file(root, meta_path, new_buf, out);
+
+    if (old_buf != NULL) uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, old_buf);
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, new_buf);
+    return status;
+}
+
+static EFI_STATUS ensure_meta_for_missing_file(EFI_FILE_HANDLE root, CHAR16 *file_path) {
+    EFI_FILE_HANDLE file;
+    EFI_STATUS status;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, file_path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(status)) return status;
+    uefi_call_wrapper(file->Close, 1, file);
+    return EFI_SUCCESS;
+}
+
+static VOID print_usage(VOID) {
+    Print(L"\r\nUsage:\r\n");
+    Print(L"  META <filename>\r\n");
+    Print(L"  META -a <filename> <meta>=<text>\r\n");
+}
+
+EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_STATUS status;
+    EFI_FILE_HANDLE root;
+    META_ARGS args;
+    CHAR16 meta_path[INPUT_MAX];
+
+    InitializeLib(ImageHandle, SystemTable);
+    disable_watchdog(SystemTable);
+
+    status = parse_args(ImageHandle, SystemTable, &args);
+    if (EFI_ERROR(status) || args.file_path[0] == 0) {
+        print_usage();
+        return EFI_INVALID_PARAMETER;
+    }
+
+    build_meta_path(args.file_path, meta_path, INPUT_MAX);
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return status;
+    }
+
+    if (args.add_mode) {
+        status = ensure_meta_for_missing_file(root, args.file_path);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nFailed to create file '%s': %r", args.file_path, status);
+        } else {
+            status = upsert_meta(root, meta_path, SystemTable, args.key, args.value);
+            if (EFI_ERROR(status)) {
+                Print(L"\r\nFailed to update metadata '%s': %r", meta_path, status);
+            } else {
+                Print(L"\r\nUpdated metadata: %a=%a", args.key, args.value);
+            }
+        }
+    } else {
+        CHAR8 *buf = NULL;
+        UINTN size = 0;
+        status = read_meta_file(root, meta_path, SystemTable, &buf, &size);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nNo metadata for '%s'", args.file_path);
+        } else {
+            Print(L"\r\nMetadata for '%s':\r\n%a", args.file_path, buf);
+            uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, buf);
+        }
+    }
+
+    uefi_call_wrapper(root->Close, 1, root);
+    return status;
+}
+

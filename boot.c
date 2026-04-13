@@ -313,7 +313,7 @@ static VOID shell_help(VOID) {
     Print(L"  cls                - clear screen\r\n");
     Print(L"  echo TEXT          - print TEXT\r\n");
     Print(L"  cd [PATH]          - change current directory\r\n");
-    Print(L"  list [PATH]        - list directory or file info\r\n");
+    Print(L"  list [-m] [PATH]   - list directory or file info (-m shows metadata)\r\n");
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
     Print(L"  del FILE           - delete a file\r\n");
@@ -441,7 +441,7 @@ static VOID shell_freedisk(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     uefi_call_wrapper(root->Close, 1, root);
 }
 
-static VOID print_file_info_line(EFI_FILE_INFO *info, CHAR8 *type_meta, CHAR8 *desc_meta) {
+static VOID print_file_info_line(EFI_FILE_INFO *info, CHAR8 *type_meta, CHAR8 *desc_meta, INTN show_meta) {
     EFI_TIME *modified = &info->ModificationTime;
     if (info->Attribute & EFI_FILE_DIRECTORY) {
         Print(L"\r\n<DIR>      %04d-%02d-%02d %02d:%02d ",
@@ -454,16 +454,18 @@ static VOID print_file_info_line(EFI_FILE_INFO *info, CHAR8 *type_meta, CHAR8 *d
               modified->Year, modified->Month, modified->Day,
               modified->Hour, modified->Minute);
         print_padded_name(info->FileName, 15);
-        Print(L" | ");
-        print_padded_ascii(type_meta, 10);
-        Print(L" | ");
-        if (desc_meta != NULL && desc_meta[0] != 0) {
-            Print(L"%a", desc_meta);
+        if (show_meta) {
+            Print(L" | ");
+            print_padded_ascii(type_meta, 10);
+            Print(L" | ");
+            if (desc_meta != NULL && desc_meta[0] != 0) {
+                Print(L"%a", desc_meta);
+            }
         }
     }
 }
 
-static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_FILE_HANDLE root;
     EFI_FILE_HANDLE handle;
     EFI_STATUS status;
@@ -508,8 +510,13 @@ static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
             uefi_call_wrapper(root->Close, 1, root);
             return;
         }
-        load_meta_for_file(target, root, SystemTable, type_meta, sizeof(type_meta), desc_meta, sizeof(desc_meta));
-        print_file_info_line(info, type_meta, desc_meta);
+        if (show_meta) {
+            load_meta_for_file(target, root, SystemTable, type_meta, sizeof(type_meta), desc_meta, sizeof(desc_meta));
+        } else {
+            type_meta[0] = 0;
+            desc_meta[0] = 0;
+        }
+        print_file_info_line(info, type_meta, desc_meta, show_meta);
         if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
         uefi_call_wrapper(root->Close, 1, root);
         return;
@@ -536,7 +543,7 @@ static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
         if (is_hidden_meta_file(info->FileName)) {
             continue;
         }
-        if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
+        if (show_meta && !(info->Attribute & EFI_FILE_DIRECTORY)) {
             if (target == NULL || *target == 0 || StrCmp(target, L"\\") == 0) {
                 SPrint(entry_path, sizeof(entry_path), L"\\%s", info->FileName);
             } else {
@@ -547,7 +554,7 @@ static VOID shell_list_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TAB
             type_meta[0] = 0;
             desc_meta[0] = 0;
         }
-        print_file_info_line(info, type_meta, desc_meta);
+        print_file_info_line(info, type_meta, desc_meta, show_meta);
     }
 
     if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
@@ -915,14 +922,24 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     }
 
     if (str_eq(line, L"list")) {
-        shell_list_path(cwd, ImageHandle, SystemTable);
+        shell_list_path(cwd, 0, ImageHandle, SystemTable);
         return;
     }
 
     if (starts_with(line, L"list ")) {
         arg = skip_spaces(line + 5);
+        if (str_eq(arg, L"-m")) {
+            shell_list_path(cwd, 1, ImageHandle, SystemTable);
+            return;
+        }
+        if (starts_with(arg, L"-m ")) {
+            arg = skip_spaces(arg + 2);
+            resolve_path(cwd, arg, resolved, INPUT_MAX);
+            shell_list_path(resolved, 1, ImageHandle, SystemTable);
+            return;
+        }
         resolve_path(cwd, arg, resolved, INPUT_MAX);
-        shell_list_path(resolved, ImageHandle, SystemTable);
+        shell_list_path(resolved, 0, ImageHandle, SystemTable);
         return;
     }
 
