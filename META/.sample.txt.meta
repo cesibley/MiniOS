@@ -1,0 +1,4 @@
+NAME: sample.txt
+TYPE: Text
+DESC: Sample file with metadata support
+USAGE: Use LIST to see TYPE when metadata exists

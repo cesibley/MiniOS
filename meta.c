@@ -22,6 +22,13 @@ static INTN is_path_sep(CHAR16 c) {
     return c == L'\\' || c == L'/';
 }
 
+static VOID normalize_path_seps(CHAR16 *path) {
+    while (path != NULL && *path) {
+        if (*path == L'/') *path = L'\\';
+        path++;
+    }
+}
+
 static CHAR16 *path_basename(CHAR16 *path) {
     CHAR16 *base = path;
     while (*path) {
@@ -35,7 +42,7 @@ static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_pat
     CHAR16 dir_part[INPUT_MAX];
     CHAR16 *base;
     UINTN i;
-    UINTN slash_pos = 0;
+    INTN slash_pos = -1;
     UINTN len;
 
     if (meta_path_len == 0) return;
@@ -45,18 +52,23 @@ static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_pat
 
     len = StrLen(file_path);
     for (i = 0; i < len; i++) {
-        if (is_path_sep(file_path[i])) slash_pos = i;
+        if (is_path_sep(file_path[i])) slash_pos = (INTN)i;
     }
 
-    if (slash_pos == 0) {
+    if (slash_pos <= 0) {
         StrCpy(dir_part, L"\\");
     } else {
-        if (slash_pos >= INPUT_MAX) slash_pos = INPUT_MAX - 1;
-        for (i = 0; i < slash_pos; i++) dir_part[i] = file_path[i];
-        dir_part[slash_pos] = 0;
+        UINTN slash_idx = (UINTN)slash_pos;
+        if (slash_idx >= INPUT_MAX) slash_idx = INPUT_MAX - 1;
+        for (i = 0; i < slash_idx; i++) {
+            CHAR16 c = file_path[i];
+            dir_part[i] = is_path_sep(c) ? L'\\' : c;
+        }
+        dir_part[slash_idx] = 0;
     }
 
     base = path_basename(file_path);
+    if (base == NULL || *base == 0) return;
     if (StrCmp(dir_part, L"\\") == 0) {
         SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.%s.meta", base);
     } else {
@@ -116,6 +128,13 @@ static VOID to_ascii(CHAR16 *in, CHAR8 *out, UINTN out_len) {
         i++;
     }
     out[i] = 0;
+}
+
+static UINTN ascii_strlen(const CHAR8 *s) {
+    UINTN n = 0;
+    if (s == NULL) return 0;
+    while (s[n] != 0) n++;
+    return n;
 }
 
 static BOOLEAN split_meta_pair(CHAR16 *pair_in, CHAR8 *key_out, UINTN key_len, CHAR8 *value_out, UINTN value_len) {
@@ -179,6 +198,7 @@ static EFI_STATUS parse_args(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTab
     } else {
         StrCpy(args->file_path, token);
     }
+    normalize_path_seps(args->file_path);
 
     return EFI_SUCCESS;
 }
@@ -271,8 +291,8 @@ static EFI_STATUS upsert_meta(EFI_FILE_HANDLE root, CHAR16 *meta_path,
     UINTN old_size = 0;
     EFI_STATUS status;
     CHAR8 *new_buf;
-    UINTN key_len = AsciiStrLen(key);
-    UINTN value_len = AsciiStrLen(value);
+    UINTN key_len = ascii_strlen(key);
+    UINTN value_len = ascii_strlen(value);
     UINTN cap;
     UINTN out = 0;
     UINTN i = 0;
@@ -352,7 +372,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     CHAR16 meta_path[INPUT_MAX];
 
     InitializeLib(ImageHandle, SystemTable);
-    disable_watchdog(SystemTable);
+    disable_uefi_watchdog(SystemTable);
 
     status = parse_args(ImageHandle, SystemTable, &args);
     if (EFI_ERROR(status) || args.file_path[0] == 0) {
@@ -361,6 +381,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     }
 
     build_meta_path(args.file_path, meta_path, INPUT_MAX);
+    if (meta_path[0] == 0) {
+        Print(L"\r\nInvalid file path '%s'", args.file_path);
+        return EFI_INVALID_PARAMETER;
+    }
 
     status = open_root(ImageHandle, SystemTable, &root);
     if (EFI_ERROR(status)) {
@@ -395,4 +419,3 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     uefi_call_wrapper(root->Close, 1, root);
     return status;
 }
-

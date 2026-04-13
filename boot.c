@@ -160,7 +160,7 @@ static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_pat
     CHAR16 dir_part[INPUT_MAX];
     CHAR16 *base;
     UINTN i;
-    UINTN slash_pos = 0;
+    INTN slash_pos = -1;
     UINTN len;
 
     if (meta_path_len == 0) return;
@@ -170,18 +170,23 @@ static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_pat
 
     len = StrLen(file_path);
     for (i = 0; i < len; i++) {
-        if (is_path_sep(file_path[i])) slash_pos = i;
+        if (is_path_sep(file_path[i])) slash_pos = (INTN)i;
     }
 
-    if (slash_pos == 0) {
+    if (slash_pos <= 0) {
         StrCpy(dir_part, L"\\");
     } else {
-        if (slash_pos >= INPUT_MAX) slash_pos = INPUT_MAX - 1;
-        for (i = 0; i < slash_pos; i++) dir_part[i] = file_path[i];
-        dir_part[slash_pos] = 0;
+        UINTN slash_idx = (UINTN)slash_pos;
+        if (slash_idx >= INPUT_MAX) slash_idx = INPUT_MAX - 1;
+        for (i = 0; i < slash_idx; i++) {
+            CHAR16 c = file_path[i];
+            dir_part[i] = is_path_sep(c) ? L'\\' : c;
+        }
+        dir_part[slash_idx] = 0;
     }
 
     base = path_basename(file_path);
+    if (base == NULL || *base == 0) return;
     if (StrCmp(dir_part, L"\\") == 0) {
         SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.%s.meta", base);
     } else {
@@ -194,9 +199,9 @@ static CHAR8 ascii_upcase(CHAR8 c) {
     return c;
 }
 
-static INTN ascii_starts_with_key(CHAR8 *s, CHAR8 *key) {
+static INTN ascii_starts_with_key(const CHAR8 *s, const char *key) {
     while (*key) {
-        if (ascii_upcase(*s) != ascii_upcase(*key)) return 0;
+        if (ascii_upcase(*s) != ascii_upcase((CHAR8)*key)) return 0;
         s++;
         key++;
     }
@@ -247,6 +252,7 @@ static VOID load_meta_for_file(CHAR16 *file_path, EFI_FILE_HANDLE root, EFI_SYST
     if (is_hidden_meta_file(path_basename(file_path))) return;
 
     build_meta_path(file_path, meta_path, INPUT_MAX);
+    if (meta_path[0] == 0) return;
 
     status = uefi_call_wrapper(root->Open, 5, root, &meta, meta_path, EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(status)) return;
