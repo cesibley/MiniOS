@@ -23,7 +23,7 @@ TARGET    := BOOTX64.EFI
 BUILD_DIR := build
 INTERMED  := $(BUILD_DIR)/boot.so
 OBJECTS   := $(BUILD_DIR)/boot.o
-PI_TARGET := CALCPI.EFI
+PI_TARGET := PI.EFI
 PI_INTERMED := $(BUILD_DIR)/pi.so
 PI_OBJECTS := $(BUILD_DIR)/pi.o
 GFX_TARGET := GFXTEST.EFI
@@ -101,7 +101,7 @@ run-info:
 	@echo "Copy $(TARGET) to:"
 	@echo "  EFI/BOOT/BOOTX64.EFI"
 	@echo "Optional PI tool:"
-	@echo "  EFI/BOOT/CALCPI.EFI"
+	@echo "  EFI/BOOT/PI.EFI"
 	@echo "Optional graphics tool:"
 	@echo "  EFI/BOOT/GFXTEST.EFI"
 	@echo "Optional clock tool:"
