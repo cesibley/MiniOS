@@ -20,7 +20,7 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `list [-m] [PATH]` — list entries for a directory or file path; metadata columns are shown only with `-m`.
 - `read FILE` — display the contents of `FILE`.
 - `write FILE TEXT` — overwrite `FILE` with `TEXT`.
-- `del FILE` — delete a file.
+- `delete FILE` — delete a file.
 - `mkdir DIR` — create a directory.
 - `rmdir DIR` — remove an empty directory.
 - `freemem` — print total memory and free conventional memory (MiB).

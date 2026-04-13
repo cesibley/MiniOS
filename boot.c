@@ -322,7 +322,7 @@ static VOID shell_help(VOID) {
     Print(L"  list [-m] [PATH]   - list directory or file info (-m shows metadata)\r\n");
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
-    Print(L"  del FILE           - delete a file\r\n");
+    Print(L"  delete FILE        - delete a file\r\n");
     Print(L"  mkdir DIR          - create a directory\r\n");
     Print(L"  rmdir DIR          - remove an empty directory\r\n");
     Print(L"  freemem            - display total and free memory\r\n");
@@ -706,7 +706,9 @@ static VOID shell_write_file(CHAR16 *path, CHAR16 *text, EFI_HANDLE ImageHandle,
 static VOID shell_delete_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_FILE_HANDLE root;
     EFI_FILE_HANDLE file;
+    EFI_FILE_HANDLE meta_file;
     EFI_STATUS status;
+    CHAR16 meta_path[INPUT_MAX];
 
     status = open_root(ImageHandle, SystemTable, &root);
     if (EFI_ERROR(status)) {
@@ -726,6 +728,18 @@ static VOID shell_delete_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_T
         Print(L"\r\nDelete failed: %r", status);
     } else {
         Print(L"\r\nDeleted '%s'", path);
+        if (!is_hidden_meta_file(path_basename(path))) {
+            build_meta_path(path, meta_path, INPUT_MAX);
+            if (meta_path[0] != 0) {
+                status = uefi_call_wrapper(root->Open, 5, root, &meta_file, meta_path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+                if (!EFI_ERROR(status)) {
+                    status = uefi_call_wrapper(meta_file->Delete, 1, meta_file);
+                    if (!EFI_ERROR(status)) {
+                        Print(L"\r\nDeleted metadata '%s'", meta_path);
+                    }
+                }
+            }
+        }
     }
 
     uefi_call_wrapper(root->Close, 1, root);
@@ -978,10 +992,10 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         return;
     }
 
-    if (starts_with(line, L"del ")) {
-        arg = skip_spaces(line + 4);
+    if (starts_with(line, L"delete ")) {
+        arg = skip_spaces(line + 7);
         if (*arg == 0) {
-            Print(L"\r\nUsage: del FILE");
+            Print(L"\r\nUsage: delete FILE");
             return;
         }
         resolve_path(cwd, arg, resolved, INPUT_MAX);
