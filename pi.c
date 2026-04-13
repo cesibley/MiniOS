@@ -3,7 +3,7 @@
 #include "watchdog.h"
 
 #define INPUT_MAX 32
-#define MAX_DIGITS 5000
+#define MAX_DIGITS 1000000
 
 static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN max_len) {
     EFI_INPUT_KEY key;
