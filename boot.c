@@ -324,8 +324,7 @@ static VOID shell_help(VOID) {
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
     Print(L"  delete PATH        - delete a file or empty directory\r\n");
     Print(L"  mkdir DIR          - create a directory\r\n");
-    Print(L"  freemem            - display total, used, and free memory\r\n");
-    Print(L"  freedisk           - display total, used, and free disk space\r\n");
+    Print(L"  free               - display total, used, and free memory + disk\r\n");
     Print(L"  run EFI_FILE [ARG] - load + start another EFI application\r\n");
     Print(L"  APP.EFI [ARG]      - shortcut for run APP.EFI [ARG]\r\n");
     Print(L"  edit FILE          - launch EDIT.EFI with FILE preloaded\r\n");
@@ -451,6 +450,11 @@ static VOID shell_freedisk(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, fs_info);
     uefi_call_wrapper(root->Close, 1, root);
+}
+
+static VOID shell_free(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    shell_freemem(SystemTable);
+    shell_freedisk(ImageHandle, SystemTable);
 }
 
 static VOID print_file_info_line(EFI_FILE_INFO *info, CHAR8 *type_meta, CHAR8 *desc_meta, INTN show_meta) {
@@ -889,13 +893,8 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         return;
     }
 
-    if (str_eq(line, L"freemem")) {
-        shell_freemem(SystemTable);
-        return;
-    }
-
-    if (str_eq(line, L"freedisk")) {
-        shell_freedisk(ImageHandle, SystemTable);
+    if (str_eq(line, L"free")) {
+        shell_free(ImageHandle, SystemTable);
         return;
     }
 

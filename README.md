@@ -9,7 +9,7 @@ On startup it prints:
 `MiniOS UEFI shell`
 
 and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
-(e.g. `list`, `read`, `write`, `freemem`, `freedisk`, `run`, `reboot`, `halt`).
+(e.g. `list`, `read`, `write`, `free`, `run`, `reboot`, `halt`).
 
 ### Built-in shell commands
 
@@ -23,8 +23,7 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `delete FILE` — delete a file.
 - `mkdir DIR` — create a directory.
 - `rmdir DIR` — remove an empty directory.
-- `freemem` — print total, used, and free memory (MiB).
-- `freedisk` — print total, used, and free volume space (MiB).
+- `free` — print total, used, and free memory and disk space (MiB).
 - `run EFI_FILE [ARGS]` — load and execute another EFI application, optionally with arguments.
 - `APP.EFI [ARGS]` — shortcut form that auto-runs an EFI app without typing `run`.
 - `APP [ARGS]` — shortcut form that appends `.EFI` automatically, then runs it.
