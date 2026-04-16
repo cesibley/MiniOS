@@ -32,7 +32,7 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `reboot` — reboot the machine via UEFI `ResetSystem`.
 - `halt` — print a halt message and stop execution in an infinite loop.
 
-The current build also produces standalone UEFI demo programs:
+The current build also produces standalone UEFI utilities:
 
 - `PIX64.EFI` — computes π digits with a spigot algorithm
 - `GFXTEST.EFI` — queries GOP modes and draws color bars
@@ -158,7 +158,7 @@ Example for PI:
 
 ```bash
 make check
-make PI.EFI
+make PIX64.EFI
 ```
 ## Troubleshooting
 

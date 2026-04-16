@@ -322,9 +322,8 @@ static VOID shell_help(VOID) {
     Print(L"  list [-m] [PATH]   - list directory or file info (-m shows metadata)\r\n");
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
-    Print(L"  delete FILE        - delete a file\r\n");
+    Print(L"  delete PATH        - delete a file or empty directory\r\n");
     Print(L"  mkdir DIR          - create a directory\r\n");
-    Print(L"  rmdir DIR          - remove an empty directory\r\n");
     Print(L"  freemem            - display total and free memory\r\n");
     Print(L"  freedisk           - display total and free disk space\r\n");
     Print(L"  run EFI_FILE [ARG] - load + start another EFI application\r\n");
@@ -703,12 +702,16 @@ static VOID shell_write_file(CHAR16 *path, CHAR16 *text, EFI_HANDLE ImageHandle,
     uefi_call_wrapper(root->Close, 1, root);
 }
 
-static VOID shell_delete_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+static VOID shell_delete_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_FILE_HANDLE root;
-    EFI_FILE_HANDLE file;
+    EFI_FILE_HANDLE handle;
     EFI_FILE_HANDLE meta_file;
     EFI_STATUS status;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN info_size = sizeof(info_buf);
     CHAR16 meta_path[INPUT_MAX];
+    BOOLEAN is_directory = FALSE;
 
     status = open_root(ImageHandle, SystemTable, &root);
     if (EFI_ERROR(status)) {
@@ -716,19 +719,26 @@ static VOID shell_delete_file(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_T
         return;
     }
 
-    status = uefi_call_wrapper(root->Open, 5, root, &file, path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    status = uefi_call_wrapper(root->Open, 5, root, &handle, path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
     if (EFI_ERROR(status)) {
         Print(L"\r\nFailed to open '%s': %r", path, status);
         uefi_call_wrapper(root->Close, 1, root);
         return;
     }
 
-    status = uefi_call_wrapper(file->Delete, 1, file);
+    status = uefi_call_wrapper(handle->GetInfo, 4, handle, &GenericFileInfo, &info_size, info);
+    if (!EFI_ERROR(status)) is_directory = (info->Attribute & EFI_FILE_DIRECTORY) != 0;
+
+    status = uefi_call_wrapper(handle->Delete, 1, handle);
     if (EFI_ERROR(status)) {
         Print(L"\r\nDelete failed: %r", status);
     } else {
-        Print(L"\r\nDeleted '%s'", path);
-        if (!is_hidden_meta_file(path_basename(path))) {
+        if (is_directory) {
+            Print(L"\r\nRemoved directory '%s'", path);
+        } else {
+            Print(L"\r\nDeleted '%s'", path);
+        }
+        if (!is_directory && !is_hidden_meta_file(path_basename(path))) {
             build_meta_path(path, meta_path, INPUT_MAX);
             if (meta_path[0] != 0) {
                 status = uefi_call_wrapper(root->Open, 5, root, &meta_file, meta_path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
@@ -767,34 +777,6 @@ static VOID shell_mkdir(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *
 
     Print(L"\r\nCreated directory '%s'", path);
     uefi_call_wrapper(dir->Close, 1, dir);
-    uefi_call_wrapper(root->Close, 1, root);
-}
-
-static VOID shell_rmdir(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
-    EFI_FILE_HANDLE root;
-    EFI_FILE_HANDLE dir;
-    EFI_STATUS status;
-
-    status = open_root(ImageHandle, SystemTable, &root);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nFailed to open filesystem: %r", status);
-        return;
-    }
-
-    status = uefi_call_wrapper(root->Open, 5, root, &dir, path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nFailed to open '%s': %r", path, status);
-        uefi_call_wrapper(root->Close, 1, root);
-        return;
-    }
-
-    status = uefi_call_wrapper(dir->Delete, 1, dir);
-    if (EFI_ERROR(status)) {
-        Print(L"\r\nrmdir failed: %r", status);
-    } else {
-        Print(L"\r\nRemoved directory '%s'", path);
-    }
-
     uefi_call_wrapper(root->Close, 1, root);
 }
 
@@ -995,11 +977,11 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     if (starts_with(line, L"delete ")) {
         arg = skip_spaces(line + 7);
         if (*arg == 0) {
-            Print(L"\r\nUsage: delete FILE");
+            Print(L"\r\nUsage: delete PATH");
             return;
         }
         resolve_path(cwd, arg, resolved, INPUT_MAX);
-        shell_delete_file(resolved, ImageHandle, SystemTable);
+        shell_delete_path(resolved, ImageHandle, SystemTable);
         return;
     }
 
@@ -1011,17 +993,6 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         }
         resolve_path(cwd, arg, resolved, INPUT_MAX);
         shell_mkdir(resolved, ImageHandle, SystemTable);
-        return;
-    }
-
-    if (starts_with(line, L"rmdir ")) {
-        arg = skip_spaces(line + 6);
-        if (*arg == 0) {
-            Print(L"\r\nUsage: rmdir DIR");
-            return;
-        }
-        resolve_path(cwd, arg, resolved, INPUT_MAX);
-        shell_rmdir(resolved, ImageHandle, SystemTable);
         return;
     }
 
