@@ -324,8 +324,8 @@ static VOID shell_help(VOID) {
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
     Print(L"  delete PATH        - delete a file or empty directory\r\n");
     Print(L"  mkdir DIR          - create a directory\r\n");
-    Print(L"  freemem            - display total and free memory\r\n");
-    Print(L"  freedisk           - display total and free disk space\r\n");
+    Print(L"  freemem            - display total, used, and free memory\r\n");
+    Print(L"  freedisk           - display total, used, and free disk space\r\n");
     Print(L"  run EFI_FILE [ARG] - load + start another EFI application\r\n");
     Print(L"  APP.EFI [ARG]      - shortcut for run APP.EFI [ARG]\r\n");
     Print(L"  edit FILE          - launch EDIT.EFI with FILE preloaded\r\n");
@@ -362,6 +362,7 @@ static VOID shell_freemem(EFI_SYSTEM_TABLE *SystemTable) {
     UINTN i;
     UINTN count;
     UINT64 total_pages = 0;
+    UINT64 used_pages = 0;
     UINT64 free_pages = 0;
 
     status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap, 5,
@@ -395,10 +396,12 @@ static VOID shell_freemem(EFI_SYSTEM_TABLE *SystemTable) {
             free_pages += desc->NumberOfPages;
         }
     }
+    used_pages = total_pages - free_pages;
 
     Print(L"\r\nMemory:");
     Print(L"\r\n  Total: %lu MiB", (total_pages * 4096ULL) / (1024ULL * 1024ULL));
-    Print(L"\r\n  Free : %lu MiB", (free_pages * 4096ULL) / (1024ULL * 1024ULL));
+    Print(L"\r\n  Used:  %lu MiB", (used_pages * 4096ULL) / (1024ULL * 1024ULL));
+    Print(L"\r\n  Free:  %lu MiB", (free_pages * 4096ULL) / (1024ULL * 1024ULL));
 
     uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, map);
 }
@@ -408,6 +411,7 @@ static VOID shell_freedisk(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     EFI_STATUS status;
     EFI_FILE_SYSTEM_INFO *fs_info = NULL;
     UINTN info_size = 0;
+    UINT64 used_space = 0;
 
     status = open_root(ImageHandle, SystemTable, &root);
     if (EFI_ERROR(status)) {
@@ -438,9 +442,12 @@ static VOID shell_freedisk(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         return;
     }
 
+    used_space = fs_info->VolumeSize - fs_info->FreeSpace;
+
     Print(L"\r\nDisk:");
     Print(L"\r\n  Total: %lu MiB", fs_info->VolumeSize / (1024ULL * 1024ULL));
-    Print(L"\r\n  Free : %lu MiB", fs_info->FreeSpace / (1024ULL * 1024ULL));
+    Print(L"\r\n  Used:  %lu MiB", used_space / (1024ULL * 1024ULL));
+    Print(L"\r\n  Free:  %lu MiB", fs_info->FreeSpace / (1024ULL * 1024ULL));
 
     uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, fs_info);
     uefi_call_wrapper(root->Close, 1, root);

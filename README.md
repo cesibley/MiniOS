@@ -23,8 +23,8 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `delete FILE` — delete a file.
 - `mkdir DIR` — create a directory.
 - `rmdir DIR` — remove an empty directory.
-- `freemem` — print total memory and free conventional memory (MiB).
-- `freedisk` — print total and free volume space (MiB).
+- `freemem` — print total, used, and free memory (MiB).
+- `freedisk` — print total, used, and free volume space (MiB).
 - `run EFI_FILE [ARGS]` — load and execute another EFI application, optionally with arguments.
 - `APP.EFI [ARGS]` — shortcut form that auto-runs an EFI app without typing `run`.
 - `APP [ARGS]` — shortcut form that appends `.EFI` automatically, then runs it.
