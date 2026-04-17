@@ -318,12 +318,13 @@ static VOID shell_help(VOID) {
     Print(L"  help               - show this help\r\n");
     Print(L"  cls                - clear screen\r\n");
     Print(L"  echo TEXT          - print TEXT\r\n");
-    Print(L"  cd [PATH]          - change current directory\r\n");
+    Print(L"  goto [PATH]        - change current directory\r\n");
     Print(L"  list [-m] [PATH]   - list directory or file info (-m shows metadata)\r\n");
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
     Print(L"  delete PATH        - delete a file or empty directory\r\n");
-    Print(L"  mkdir DIR          - create a directory\r\n");
+    Print(L"  make DIR           - create a directory\r\n");
+    Print(L"  make -f FILE       - create an empty file\r\n");
     Print(L"  free               - display total, used, and free memory + disk\r\n");
     Print(L"  run EFI_FILE [ARG] - load + start another EFI application\r\n");
     Print(L"  APP.EFI [ARG]      - shortcut for run APP.EFI [ARG]\r\n");
@@ -766,9 +767,9 @@ static VOID shell_delete_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_T
     uefi_call_wrapper(root->Close, 1, root);
 }
 
-static VOID shell_mkdir(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+static VOID shell_make(CHAR16 *path, BOOLEAN create_file, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_FILE_HANDLE root;
-    EFI_FILE_HANDLE dir;
+    EFI_FILE_HANDLE handle;
     EFI_STATUS status;
 
     status = open_root(ImageHandle, SystemTable, &root);
@@ -777,17 +778,21 @@ static VOID shell_mkdir(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *
         return;
     }
 
-    status = uefi_call_wrapper(root->Open, 5, root, &dir, path,
+    status = uefi_call_wrapper(root->Open, 5, root, &handle, path,
                                EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
-                               EFI_FILE_DIRECTORY);
+                               create_file ? 0 : EFI_FILE_DIRECTORY);
     if (EFI_ERROR(status)) {
-        Print(L"\r\nmkdir failed for '%s': %r", path, status);
+        Print(L"\r\nmake failed for '%s': %r", path, status);
         uefi_call_wrapper(root->Close, 1, root);
         return;
     }
 
-    Print(L"\r\nCreated directory '%s'", path);
-    uefi_call_wrapper(dir->Close, 1, dir);
+    if (create_file) {
+        Print(L"\r\nCreated file '%s'", path);
+    } else {
+        Print(L"\r\nCreated directory '%s'", path);
+    }
+    uefi_call_wrapper(handle->Close, 1, handle);
     uefi_call_wrapper(root->Close, 1, root);
 }
 
@@ -914,15 +919,15 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         return;
     }
 
-    if (str_eq(line, L"cd")) {
+    if (str_eq(line, L"goto")) {
         shell_cd(cwd, L"\\", ImageHandle, SystemTable);
         return;
     }
 
-    if (starts_with(line, L"cd ")) {
-        arg = skip_spaces(line + 3);
+    if (starts_with(line, L"goto ")) {
+        arg = skip_spaces(line + 5);
         if (*arg == 0) {
-            Print(L"\r\nUsage: cd [PATH]");
+            Print(L"\r\nUsage: goto [PATH]");
             return;
         }
         shell_cd(cwd, arg, ImageHandle, SystemTable);
@@ -991,14 +996,27 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         return;
     }
 
-    if (starts_with(line, L"mkdir ")) {
-        arg = skip_spaces(line + 6);
+    if (starts_with(line, L"make ")) {
+        BOOLEAN create_file = FALSE;
+
+        arg = skip_spaces(line + 5);
         if (*arg == 0) {
-            Print(L"\r\nUsage: mkdir DIR");
+            Print(L"\r\nUsage: make DIR");
+            Print(L"\r\n       make -f FILE");
             return;
         }
+
+        if (starts_with(arg, L"-f ")) {
+            create_file = TRUE;
+            arg = skip_spaces(arg + 2);
+            if (*arg == 0) {
+                Print(L"\r\nUsage: make -f FILE");
+                return;
+            }
+        }
+
         resolve_path(cwd, arg, resolved, INPUT_MAX);
-        shell_mkdir(resolved, ImageHandle, SystemTable);
+        shell_make(resolved, create_file, ImageHandle, SystemTable);
         return;
     }
 

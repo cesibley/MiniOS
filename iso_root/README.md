@@ -16,12 +16,13 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `help` — show the built-in command list.
 - `cls` — clear the screen and reset cursor position.
 - `echo TEXT` — print `TEXT` exactly as entered.
-- `cd [PATH]` — change the current working directory (uses `\` root by default).
+- `goto [PATH]` — change the current working directory (uses `\` root by default).
 - `list [-m] [PATH]` — list entries for a directory or file path; metadata columns are shown only with `-m`.
 - `read FILE` — display the contents of `FILE`.
 - `write FILE TEXT` — overwrite `FILE` with `TEXT`.
 - `delete FILE` — delete a file.
-- `mkdir DIR` — create a directory.
+- `make DIR` — create a directory.
+- `make -f FILE` — create an empty file.
 - `rmdir DIR` — remove an empty directory.
 - `free` — print total, used, and free memory and disk space (MiB).
 - `run EFI_FILE [ARGS]` — load and execute another EFI application, optionally with arguments.
@@ -40,7 +41,7 @@ The current build also produces standalone UEFI utilities:
 - `SUNMAP.EFI` — world map demo with a real-time day/night illumination overlay; land-mask data is embedded so the EFI binary is self-contained
 - `GOPQUERY.EFI` — GOP capability query tool with per-mode inspection and optional mode switching
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
-- `VIEW.EFI` — extension-aware universal viewer (`.txt` text, `.jpg/.jpeg/.png/.bmp` image decode via stb_image, otherwise hex)
+- `VIEW.EFI` — extension-aware universal viewer (`.txt` text, `.jpg/.jpeg/.png/.bmp/.gif` image decode via stb_image, otherwise hex)
 
 ## Latest project configuration
 
