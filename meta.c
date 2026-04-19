@@ -130,6 +130,25 @@ static VOID to_ascii(CHAR16 *in, CHAR8 *out, UINTN out_len) {
     out[i] = 0;
 }
 
+static CHAR8 to_upper8(CHAR8 c) {
+    if (c >= 'a' && c <= 'z') return (CHAR8)(c - 'a' + 'A');
+    return c;
+}
+
+static CHAR8 to_lower8(CHAR8 c) {
+    if (c >= 'A' && c <= 'Z') return (CHAR8)(c - 'A' + 'a');
+    return c;
+}
+
+static VOID normalize_key_upper(CHAR8 *key) {
+    UINTN i = 0;
+    if (key == NULL) return;
+    while (key[i] != 0) {
+        key[i] = to_upper8(key[i]);
+        i++;
+    }
+}
+
 static UINTN ascii_strlen(const CHAR8 *s) {
     UINTN n = 0;
     if (s == NULL) return 0;
@@ -139,25 +158,25 @@ static UINTN ascii_strlen(const CHAR8 *s) {
 
 static BOOLEAN split_meta_pair(CHAR16 *pair_in, CHAR8 *key_out, UINTN key_len, CHAR8 *value_out, UINTN value_len) {
     UINTN i = 0;
-    UINTN eq = 0;
+    UINTN sep = 0;
 
     while (pair_in[i] != 0) {
         if (pair_in[i] == L'=') {
-            eq = i;
+            sep = i;
             break;
         }
         i++;
     }
-    if (eq == 0 || pair_in[eq] == 0 || pair_in[eq + 1] == 0) return FALSE;
+    if (sep == 0 || pair_in[sep] == 0 || pair_in[sep + 1] == 0) return FALSE;
 
     {
         CHAR16 key16[TOKEN_MAX];
         CHAR16 val16[VALUE_MAX];
         UINTN k = 0;
         UINTN v = 0;
-        for (i = 0; i < eq && k + 1 < TOKEN_MAX; i++) key16[k++] = pair_in[i];
+        for (i = 0; i < sep && k + 1 < TOKEN_MAX; i++) key16[k++] = pair_in[i];
         key16[k] = 0;
-        i = eq + 1;
+        i = sep + 1;
         while (pair_in[i] != 0 && v + 1 < VALUE_MAX) val16[v++] = pair_in[i++];
         val16[v] = 0;
         to_ascii(key16, key_out, key_len);
@@ -195,6 +214,7 @@ static EFI_STATUS parse_args(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTab
         if (!next_token(opt, n, &idx, args->file_path, INPUT_MAX)) return EFI_INVALID_PARAMETER;
         if (!next_token(opt, n, &idx, token, VALUE_MAX)) return EFI_INVALID_PARAMETER;
         if (!split_meta_pair(token, args->key, TOKEN_MAX, args->value, VALUE_MAX)) return EFI_INVALID_PARAMETER;
+        normalize_key_upper(args->key);
     } else {
         StrCpy(args->file_path, token);
     }
@@ -275,13 +295,32 @@ static EFI_STATUS write_meta_file(EFI_FILE_HANDLE root, CHAR16 *meta_path,
     return status;
 }
 
+static BOOLEAN is_space8(CHAR8 c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
 static BOOLEAN line_key_matches(CHAR8 *line, UINTN line_len, CHAR8 *key, UINTN key_len) {
-    UINTN i;
-    if (line_len <= key_len) return FALSE;
-    for (i = 0; i < key_len; i++) {
-        if (line[i] != key[i]) return FALSE;
+    UINTN i = 0;
+    UINTN start;
+    UINTN end;
+    UINTN key_i;
+
+    while (i < line_len && is_space8(line[i])) i++;
+    if (i >= line_len) return FALSE;
+    start = i;
+
+    while (i < line_len && line[i] != '=' && line[i] != ':') i++;
+    if (i >= line_len || (line[i] != '=' && line[i] != ':')) return FALSE;
+    end = i;
+
+    while (end > start && is_space8(line[end - 1])) end--;
+    if (end - start != key_len) return FALSE;
+
+    for (key_i = 0; key_i < key_len; key_i++) {
+        if (to_lower8(line[start + key_i]) != to_lower8(key[key_i])) return FALSE;
     }
-    return line[key_len] == '=';
+
+    return TRUE;
 }
 
 static EFI_STATUS upsert_meta(EFI_FILE_HANDLE root, CHAR16 *meta_path,
@@ -322,7 +361,8 @@ static EFI_STATUS upsert_meta(EFI_FILE_HANDLE root, CHAR16 *meta_path,
         if (end > start && line_key_matches(&old_buf[start], end - start, key, key_len)) {
             UINTN k;
             for (k = 0; k < key_len; k++) new_buf[out++] = key[k];
-            new_buf[out++] = '=';
+            new_buf[out++] = ':';
+            new_buf[out++] = ' ';
             for (k = 0; k < value_len; k++) new_buf[out++] = value[k];
             new_buf[out++] = '\n';
             updated = TRUE;
@@ -336,7 +376,8 @@ static EFI_STATUS upsert_meta(EFI_FILE_HANDLE root, CHAR16 *meta_path,
     if (!updated) {
         UINTN k;
         for (k = 0; k < key_len; k++) new_buf[out++] = key[k];
-        new_buf[out++] = '=';
+        new_buf[out++] = ':';
+        new_buf[out++] = ' ';
         for (k = 0; k < value_len; k++) new_buf[out++] = value[k];
         new_buf[out++] = '\n';
     }
@@ -401,7 +442,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             if (EFI_ERROR(status)) {
                 Print(L"\r\nFailed to update metadata '%s': %r", meta_path, status);
             } else {
-                Print(L"\r\nUpdated metadata: %a=%a", args.key, args.value);
+                Print(L"\r\nUpdated metadata: %a: %a", args.key, args.value);
             }
         }
     } else {
