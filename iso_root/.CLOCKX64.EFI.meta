@@ -1,0 +1,4 @@
+NAME: CLOCKX64.EFI
+TYPE: Executable
+DESC: Metadata for CLOCKX64.EFI
+USAGE: Run CLOCKX64.EFI from the MiniOS shell

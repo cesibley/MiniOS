@@ -1,0 +1,4 @@
+NAME: GFXCLOCK.EFI
+TYPE: Executable
+DESC: Displays Graphical Clock
+USAGE: Run GFXCLOCK.EFI from the MiniOS shell

@@ -1,0 +1,4 @@
+NAME: test.txt
+TYPE: Text
+DESC: Sample Test File
+USAGE: Open test.txt with VIEW.EFI or EDITTEXT.EFI

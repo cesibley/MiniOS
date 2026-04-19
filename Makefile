@@ -23,7 +23,7 @@ TARGET    := BOOTX64.EFI
 BUILD_DIR := build
 INTERMED  := $(BUILD_DIR)/boot.so
 OBJECTS   := $(BUILD_DIR)/boot.o
-PI_TARGET := CALCPI.EFI
+PI_TARGET := PI.EFI
 PI_INTERMED := $(BUILD_DIR)/pi.so
 PI_OBJECTS := $(BUILD_DIR)/pi.o
 GFX_TARGET := GFXTEST.EFI
@@ -32,12 +32,9 @@ GFX_OBJECTS := $(BUILD_DIR)/gfxtest.o
 CLOCK_TARGET := CLOCKX64.EFI
 CLOCK_INTERMED := $(BUILD_DIR)/clock.so
 CLOCK_OBJECTS := $(BUILD_DIR)/clock.o
-HEX_TARGET := VIEWHEX.EFI
-HEX_INTERMED := $(BUILD_DIR)/hexview.so
-HEX_OBJECTS := $(BUILD_DIR)/hexview.o
-EDIT_TARGET := EDITTEXT.EFI
-EDIT_INTERMED := $(BUILD_DIR)/textedit.so
-EDIT_OBJECTS := $(BUILD_DIR)/textedit.o
+EDIT_TARGET := EDIT.EFI
+EDIT_INTERMED := $(BUILD_DIR)/edit.so
+EDIT_OBJECTS := $(BUILD_DIR)/edit.o
 GFXCLOCK_TARGET := GFXCLOCK.EFI
 GFXCLOCK_INTERMED := $(BUILD_DIR)/gfxclock.so
 GFXCLOCK_OBJECTS := $(BUILD_DIR)/gfxclock.o
@@ -47,14 +44,14 @@ SUNMAP_OBJECTS := $(BUILD_DIR)/sunmap.o
 GOPQUERY_TARGET := GOPQUERY.EFI
 GOPQUERY_INTERMED := $(BUILD_DIR)/gopquery.so
 GOPQUERY_OBJECTS := $(BUILD_DIR)/gopquery.o
-IMGVIEW_TARGET := VIEWIMG.EFI
-IMGVIEW_INTERMED := $(BUILD_DIR)/imgview.so
-IMGVIEW_OBJECTS := $(BUILD_DIR)/imgview.o
 VIEW_TARGET := VIEW.EFI
 VIEW_INTERMED := $(BUILD_DIR)/view.so
 VIEW_OBJECTS := $(BUILD_DIR)/view.o
+META_TARGET := META.EFI
+META_INTERMED := $(BUILD_DIR)/meta.so
+META_OBJECTS := $(BUILD_DIR)/meta.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(HEX_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(IMGVIEW_TARGET) $(VIEW_TARGET)
+all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(VIEW_TARGET) $(META_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -87,42 +84,40 @@ clean:
 	      $(PI_OBJECTS) $(PI_INTERMED) $(PI_TARGET) \
 	      $(GFX_OBJECTS) $(GFX_INTERMED) $(GFX_TARGET) \
 	      $(CLOCK_OBJECTS) $(CLOCK_INTERMED) $(CLOCK_TARGET) \
-	      $(HEX_OBJECTS) $(HEX_INTERMED) $(HEX_TARGET) \
 	      $(EDIT_OBJECTS) $(EDIT_INTERMED) $(EDIT_TARGET) \
 	      $(GFXCLOCK_OBJECTS) $(GFXCLOCK_INTERMED) $(GFXCLOCK_TARGET) \
 	      $(SUNMAP_OBJECTS) $(SUNMAP_INTERMED) $(SUNMAP_TARGET) \
 	      $(GOPQUERY_OBJECTS) $(GOPQUERY_INTERMED) $(GOPQUERY_TARGET) \
-	      $(IMGVIEW_OBJECTS) $(IMGVIEW_INTERMED) $(IMGVIEW_TARGET) \
 	      $(VIEW_OBJECTS) $(VIEW_INTERMED) $(VIEW_TARGET) \
+	      $(META_OBJECTS) $(META_INTERMED) $(META_TARGET) \
 	      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
-	      iso_root/$(CLOCK_TARGET) iso_root/$(HEX_TARGET) iso_root/$(EDIT_TARGET) \
+	      iso_root/$(CLOCK_TARGET) iso_root/$(EDIT_TARGET) \
 	      iso_root/$(GFXCLOCK_TARGET) iso_root/$(SUNMAP_TARGET) \
-	      iso_root/$(GOPQUERY_TARGET) iso_root/$(IMGVIEW_TARGET) iso_root/$(VIEW_TARGET) \
+	      iso_root/$(GOPQUERY_TARGET) iso_root/$(VIEW_TARGET) \
+	      iso_root/$(META_TARGET) \
 	      iso_root/EFI/BOOT/$(TARGET)
 
 run-info:
 	@echo "Copy $(TARGET) to:"
 	@echo "  EFI/BOOT/BOOTX64.EFI"
 	@echo "Optional PI tool:"
-	@echo "  EFI/BOOT/CALCPI.EFI"
+	@echo "  EFI/BOOT/PI.EFI"
 	@echo "Optional graphics tool:"
 	@echo "  EFI/BOOT/GFXTEST.EFI"
 	@echo "Optional clock tool:"
 	@echo "  EFI/BOOT/CLOCKX64.EFI"
-	@echo "Optional hex viewer:"
-	@echo "  EFI/BOOT/VIEWHEX.EFI"
 	@echo "Optional text editor:"
-	@echo "  EFI/BOOT/EDITTEXT.EFI"
+	@echo "  EFI/BOOT/EDIT.EFI"
 	@echo "Optional full-screen graphics clock:"
 	@echo "  EFI/BOOT/GFXCLOCK.EFI"
 	@echo "Optional world illumination map demo:"
 	@echo "  EFI/BOOT/SUNMAP.EFI"
 	@echo "Optional GOP query tool:"
 	@echo "  EFI/BOOT/GOPQUERY.EFI"
-	@echo "Optional image viewer:"
-	@echo "  EFI/BOOT/VIEWIMG.EFI"
 	@echo "Optional universal viewer:"
 	@echo "  EFI/BOOT/VIEW.EFI"
+	@echo "Optional metadata editor:"
+	@echo "  EFI/BOOT/META.EFI"
 
 $(BUILD_DIR)/pi.o: pi.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -163,20 +158,8 @@ $(CLOCK_TARGET): $(CLOCK_INTERMED)
 		--target=efi-app-$(ARCH) $< $@
 	cp -f $@ iso_root/$@
 
-$(BUILD_DIR)/hexview.o: hexview.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
 
-$(HEX_INTERMED): $(HEX_OBJECTS)
-	$(LD) $(LDFLAGS) $(CRT0) $(HEX_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
-
-$(HEX_TARGET): $(HEX_INTERMED)
-	$(OBJCOPY) \
-		-j .text -j .sdata -j .data -j .dynamic \
-		-j .dynsym -j .rel -j .rela -j .reloc \
-		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
-
-$(BUILD_DIR)/textedit.o: textedit.c | $(BUILD_DIR)
+$(BUILD_DIR)/edit.o: edit.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(EDIT_INTERMED): $(EDIT_OBJECTS)
@@ -230,18 +213,6 @@ $(GOPQUERY_TARGET): $(GOPQUERY_INTERMED)
 
 .PHONY: all clean check run-info
 
-$(BUILD_DIR)/imgview.o: imgview.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(IMGVIEW_INTERMED): $(IMGVIEW_OBJECTS)
-	$(LD) $(LDFLAGS) $(CRT0) $(IMGVIEW_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
-
-$(IMGVIEW_TARGET): $(IMGVIEW_INTERMED)
-	$(OBJCOPY) \
-		-j .text -j .sdata -j .data -j .dynamic \
-		-j .dynsym -j .rel -j .rela -j .reloc \
-		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
 $(BUILD_DIR)/view.o: view.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -250,6 +221,20 @@ $(VIEW_INTERMED): $(VIEW_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(VIEW_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
 $(VIEW_TARGET): $(VIEW_INTERMED)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
+	cp -f $@ iso_root/$@
+
+
+$(BUILD_DIR)/meta.o: meta.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(META_INTERMED): $(META_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(META_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(META_TARGET): $(META_INTERMED)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \

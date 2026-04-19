@@ -531,7 +531,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     } else if (ends_with_icase(path, L".txt")) {
         mode = VIEW_TEXT;
     } else if (ends_with_icase(path, L".jpg") || ends_with_icase(path, L".jpeg") ||
-               ends_with_icase(path, L".png") || ends_with_icase(path, L".bmp")) {
+               ends_with_icase(path, L".png") || ends_with_icase(path, L".bmp") ||
+               ends_with_icase(path, L".gif")) {
         mode = VIEW_IMAGE;
     } else {
         mode = VIEW_HEX;
