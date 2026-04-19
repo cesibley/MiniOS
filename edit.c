@@ -758,7 +758,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     Print(L"EDIT (UEFI)\r\n");
     parse_load_options_path(&ed);
     if (ed.path[0] == 0) {
-        set_status(&ed, L"No file selected (use: edit <file>)");
+        set_status(&ed, L"No file selected (use: EDIT <file>)");
     } else {
         CHAR16 load_status[64];
         status = editor_load_file(&ed);

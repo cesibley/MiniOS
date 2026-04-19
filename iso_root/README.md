@@ -28,7 +28,6 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `run EFI_FILE [ARGS]` — load and execute another EFI application, optionally with arguments.
 - `APP.EFI [ARGS]` — shortcut form that auto-runs an EFI app without typing `run`.
 - `APP [ARGS]` — shortcut form that appends `.EFI` automatically, then runs it.
-- `edit FILE` — open `FILE` in the standalone editor (`EDIT.EFI`).
 - `reboot` — reboot the machine via UEFI `ResetSystem`.
 - `halt` — print a halt message and stop execution in an infinite loop.
 
@@ -107,7 +106,7 @@ run GOPQUERY.EFI
 run EDIT.EFI filename.txt
 run VIEW.EFI file.txt
 run VIEW.EFI -h file.bin
-edit filename.txt
+EDIT filename.txt
 ```
 
 Because shell auto-run shortcuts are enabled, these are equivalent:

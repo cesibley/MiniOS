@@ -32,9 +32,9 @@ GFX_OBJECTS := $(BUILD_DIR)/gfxtest.o
 CLOCK_TARGET := CLOCKX64.EFI
 CLOCK_INTERMED := $(BUILD_DIR)/clock.so
 CLOCK_OBJECTS := $(BUILD_DIR)/clock.o
-EDIT_TARGET := EDITTEXT.EFI
-EDIT_INTERMED := $(BUILD_DIR)/textedit.so
-EDIT_OBJECTS := $(BUILD_DIR)/textedit.o
+EDIT_TARGET := EDIT.EFI
+EDIT_INTERMED := $(BUILD_DIR)/edit.so
+EDIT_OBJECTS := $(BUILD_DIR)/edit.o
 GFXCLOCK_TARGET := GFXCLOCK.EFI
 GFXCLOCK_INTERMED := $(BUILD_DIR)/gfxclock.so
 GFXCLOCK_OBJECTS := $(BUILD_DIR)/gfxclock.o
@@ -51,7 +51,7 @@ META_TARGET := META.EFI
 META_INTERMED := $(BUILD_DIR)/meta.so
 META_OBJECTS := $(BUILD_DIR)/meta.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(VIEW_TARGET) $(META_TARGET)
+all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(VIEW_TARGET) $(META_TARGET)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -107,7 +107,7 @@ run-info:
 	@echo "Optional clock tool:"
 	@echo "  EFI/BOOT/CLOCKX64.EFI"
 	@echo "Optional text editor:"
-	@echo "  EFI/BOOT/EDITTEXT.EFI"
+	@echo "  EFI/BOOT/EDIT.EFI"
 	@echo "Optional full-screen graphics clock:"
 	@echo "  EFI/BOOT/GFXCLOCK.EFI"
 	@echo "Optional world illumination map demo:"
@@ -159,7 +159,7 @@ $(CLOCK_TARGET): $(CLOCK_INTERMED)
 	cp -f $@ iso_root/$@
 
 
-$(BUILD_DIR)/textedit.o: textedit.c | $(BUILD_DIR)
+$(BUILD_DIR)/edit.o: edit.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(EDIT_INTERMED): $(EDIT_OBJECTS)

@@ -328,7 +328,6 @@ static VOID shell_help(VOID) {
     Print(L"  free               - display total, used, and free memory + disk\r\n");
     Print(L"  run EFI_FILE [ARG] - load + start another EFI application\r\n");
     Print(L"  APP.EFI [ARG]      - shortcut for run APP.EFI [ARG]\r\n");
-    Print(L"  edit FILE          - launch EDIT.EFI with FILE preloaded\r\n");
     Print(L"  reboot             - reboot system via UEFI ResetSystem\r\n");
     Print(L"  halt               - stop here forever\r\n");
     Print(L"\r\nTip: Up/Down browse history, Left/Right move cursor, Ins toggles insert/overwrite.\r\n");
@@ -1041,21 +1040,6 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
 
         resolve_path(cwd, app, resolved, INPUT_MAX);
         shell_run_file(resolved, (*args != 0) ? args : NULL, ImageHandle, SystemTable);
-        return;
-    }
-
-    if (starts_with(line, L"edit ")) {
-        CHAR16 edit_path[INPUT_MAX];
-
-        arg = skip_spaces(line + 5);
-        if (*arg == 0) {
-            Print(L"\r\nUsage: edit FILE");
-            return;
-        }
-
-        resolve_path(cwd, arg, edit_path, INPUT_MAX);
-        StrCpy(resolved, L"\\EDIT.EFI");
-        shell_run_file(resolved, edit_path, ImageHandle, SystemTable);
         return;
     }
 
