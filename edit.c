@@ -28,6 +28,8 @@ typedef struct {
     BOOLEAN dirty;
     CHAR16 status[128];
     CHAR16 path[INPUT_MAX];
+    CHAR16 *render_line;
+    UINTN render_cap;
 
     EFI_HANDLE image;
     EFI_SYSTEM_TABLE *st;
@@ -104,6 +106,29 @@ static EFI_STATUS ensure_row_capacity(editor_t *ed, UINTN needed) {
     free_pool(ed, ed->rows);
     ed->rows = next;
     ed->row_cap = new_cap;
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS ensure_render_capacity(editor_t *ed, UINTN needed) {
+    CHAR16 *next;
+    UINTN new_cap;
+
+    if (needed <= ed->render_cap) {
+        return EFI_SUCCESS;
+    }
+
+    new_cap = ed->render_cap == 0 ? 128 : ed->render_cap;
+    while (new_cap < needed) {
+        new_cap *= 2;
+    }
+
+    if (EFI_ERROR(alloc_pool(ed, sizeof(CHAR16) * new_cap, (VOID **)&next))) {
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    free_pool(ed, ed->render_line);
+    ed->render_line = next;
+    ed->render_cap = new_cap;
     return EFI_SUCCESS;
 }
 
@@ -204,6 +229,7 @@ static VOID editor_free(editor_t *ed) {
         free_pool(ed, ed->rows[i].data);
     }
     free_pool(ed, ed->rows);
+    free_pool(ed, ed->render_line);
 }
 
 static VOID editor_scroll(editor_t *ed) {
@@ -231,22 +257,61 @@ static VOID draw_spaces(UINTN count) {
     }
 }
 
-static VOID editor_draw_rows(editor_t *ed) {
-    UINTN y;
-    UINTN text_rows = (ed->screen_rows > 0) ? ed->screen_rows - 1 : 0;
+static VOID editor_draw_row(editor_t *ed, UINTN y, UINTN file_row, EFI_STATUS render_status) {
+    uefi_call_wrapper(ed->st->ConOut->SetCursorPosition, 3, ed->st->ConOut, 0, y);
 
-    for (y = 0; y < text_rows; ++y) {
-        UINTN file_row = ed->row_off + y;
-        uefi_call_wrapper(ed->st->ConOut->SetCursorPosition, 3, ed->st->ConOut, 0, y);
-
+    if (EFI_ERROR(render_status) || ed->screen_cols == 0) {
         if (file_row >= ed->row_count) {
             Print(L"~");
             if (ed->screen_cols > 1) {
                 draw_spaces(ed->screen_cols - 1);
             }
-            continue;
+            return;
         }
 
+        {
+            line_t *line = &ed->rows[file_row];
+            UINTN start = ed->col_off;
+            UINTN remain = 0;
+            UINTN i;
+
+            if (start < line->len) {
+                remain = line->len - start;
+                if (remain > ed->screen_cols) {
+                    remain = ed->screen_cols;
+                }
+
+                for (i = 0; i < remain; ++i) {
+                    CHAR16 ch = line->data[start + i];
+                    if (ch < 32 || ch > 126) {
+                        ch = L'?';
+                    }
+                    Print(L"%c", ch);
+                }
+            }
+
+            if (ed->screen_cols > remain) {
+                draw_spaces(ed->screen_cols - remain);
+            }
+        }
+        return;
+    }
+
+    {
+        UINTN x;
+        for (x = 0; x < ed->screen_cols; ++x) {
+            ed->render_line[x] = L' ';
+        }
+        ed->render_line[ed->screen_cols] = 0;
+    }
+
+    if (file_row >= ed->row_count) {
+        ed->render_line[0] = L'~';
+        Print(L"%s", ed->render_line);
+        return;
+    }
+
+    {
         line_t *line = &ed->rows[file_row];
         UINTN start = ed->col_off;
         UINTN remain = 0;
@@ -263,13 +328,26 @@ static VOID editor_draw_rows(editor_t *ed) {
                 if (ch < 32 || ch > 126) {
                     ch = L'?';
                 }
-                Print(L"%c", ch);
+                ed->render_line[i] = ch;
             }
         }
+    }
 
-        if (ed->screen_cols > remain) {
-            draw_spaces(ed->screen_cols - remain);
-        }
+    Print(L"%s", ed->render_line);
+}
+
+static VOID editor_draw_rows(editor_t *ed) {
+    UINTN y;
+    UINTN text_rows = (ed->screen_rows > 0) ? ed->screen_rows - 1 : 0;
+    EFI_STATUS render_status = EFI_SUCCESS;
+
+    if (ed->screen_cols > 0) {
+        render_status = ensure_render_capacity(ed, ed->screen_cols + 1);
+    }
+
+    for (y = 0; y < text_rows; ++y) {
+        UINTN file_row = ed->row_off + y;
+        editor_draw_row(ed, y, file_row, render_status);
     }
 }
 
@@ -281,6 +359,7 @@ static VOID editor_draw_status(editor_t *ed) {
     UINTN used;
     UINTN i;
     UINTN status_cols = 0;
+    EFI_STATUS render_status = EFI_SUCCESS;
 
     SPrint(meta, sizeof(meta), L"[%s]%a Ln %u, Col %u %s",
            ed->path[0] ? ed->path : L"(new)",
@@ -293,11 +372,21 @@ static VOID editor_draw_status(editor_t *ed) {
     uefi_call_wrapper(ed->st->ConOut->SetCursorPosition, 3, ed->st->ConOut, 0, ed->screen_rows - 1);
     if (ed->screen_cols > 0) {
         status_cols = ed->screen_cols - 1;
+        render_status = ensure_render_capacity(ed, status_cols + 1);
     }
 
     used = StrLen(bar);
     if (used > status_cols) {
         used = status_cols;
+    }
+
+    if (!EFI_ERROR(render_status) && status_cols > 0) {
+        for (i = 0; i < status_cols; ++i) {
+            ed->render_line[i] = (i < used) ? bar[i] : L' ';
+        }
+        ed->render_line[status_cols] = 0;
+        Print(L"%s", ed->render_line);
+        return;
     }
 
     for (i = 0; i < used; ++i) {
@@ -330,6 +419,24 @@ static VOID editor_refresh(editor_t *ed) {
 
 static VOID editor_refresh_cursor(editor_t *ed) {
     editor_scroll(ed);
+    editor_draw_status(ed);
+    editor_place_cursor(ed);
+}
+
+static VOID editor_refresh_current_row(editor_t *ed) {
+    UINTN text_rows = (ed->screen_rows > 0) ? ed->screen_rows - 1 : 0;
+    EFI_STATUS render_status = EFI_SUCCESS;
+
+    editor_scroll(ed);
+
+    if (ed->screen_cols > 0) {
+        render_status = ensure_render_capacity(ed, ed->screen_cols + 1);
+    }
+
+    if (text_rows > 0 && ed->cy >= ed->row_off && ed->cy < ed->row_off + text_rows) {
+        editor_draw_row(ed, ed->cy - ed->row_off, ed->cy, render_status);
+    }
+
     editor_draw_status(ed);
     editor_place_cursor(ed);
 }
@@ -593,25 +700,45 @@ static EFI_STATUS editor_load_file(editor_t *ed) {
         ed->row_count = 1;
         ed->rows[0].len = 0;
 
+        ed->cx = 0;
+        ed->cy = 0;
+
         for (i = 0; i < used; ++i) {
             CHAR8 b = buffer[i];
+            CHAR16 out = 0;
+
             if (b == '\r') {
                 continue;
             }
             if (b == '\n') {
-                if (EFI_ERROR(editor_insert_newline(ed))) {
+                if (EFI_ERROR(insert_empty_row(ed, ed->cy + 1))) {
                     status = EFI_OUT_OF_RESOURCES;
                     break;
                 }
+                ed->cy++;
+                ed->cx = 0;
                 continue;
             }
-            if (b >= 32 && b <= 126) {
-                if (EFI_ERROR(editor_insert_char(ed, (CHAR16)b))) {
+
+            if (b == '\t') {
+                out = L' ';
+            } else if (b >= 32 && b <= 126) {
+                out = (CHAR16)b;
+            } else {
+                out = L'?';
+            }
+
+            {
+                line_t *line = &ed->rows[ed->cy];
+                if (EFI_ERROR(ensure_line_capacity(ed, line, line->len + 1))) {
                     status = EFI_OUT_OF_RESOURCES;
                     break;
                 }
+                line->data[line->len++] = out;
+                ed->cx = line->len;
             }
         }
+
         ed->cx = 0;
         ed->cy = 0;
         ed->row_off = 0;
@@ -816,8 +943,19 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
         }
 
         if (key.ScanCode == SCAN_DELETE) {
+            UINTN prev_row_off = ed.row_off;
+            UINTN prev_col_off = ed.col_off;
+            UINTN prev_row_count = ed.row_count;
+            UINTN prev_cy = ed.cy;
             if (EFI_ERROR(editor_delete(&ed))) {
                 set_status(&ed, L"Out of memory");
+            }
+            editor_scroll(&ed);
+            if (prev_row_off != ed.row_off || prev_col_off != ed.col_off ||
+                prev_row_count != ed.row_count || prev_cy != ed.cy) {
+                editor_refresh(&ed);
+            } else {
+                editor_refresh_current_row(&ed);
             }
             continue;
         }
@@ -835,28 +973,54 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
             continue;
         }
 
-        if (key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
-            if (EFI_ERROR(editor_insert_newline(&ed))) {
-                set_status(&ed, L"Out of memory");
-            }
-        } else if (key.UnicodeChar == CHAR_BACKSPACE) {
-            if (EFI_ERROR(editor_backspace(&ed))) {
-                set_status(&ed, L"Out of memory");
-            }
-        } else if (key.UnicodeChar == CHAR_TAB) {
-            UINTN n;
-            for (n = 0; n < 4; ++n) {
-                if (EFI_ERROR(editor_insert_char(&ed, L' '))) {
+        {
+            UINTN prev_row_off = ed.row_off;
+            UINTN prev_col_off = ed.col_off;
+            UINTN prev_row_count = ed.row_count;
+            UINTN prev_cy = ed.cy;
+            BOOLEAN changed = FALSE;
+
+            if (key.UnicodeChar == CHAR_CARRIAGE_RETURN) {
+                if (EFI_ERROR(editor_insert_newline(&ed))) {
                     set_status(&ed, L"Out of memory");
-                    break;
+                } else {
+                    changed = TRUE;
+                }
+            } else if (key.UnicodeChar == CHAR_BACKSPACE) {
+                if (EFI_ERROR(editor_backspace(&ed))) {
+                    set_status(&ed, L"Out of memory");
+                } else {
+                    changed = TRUE;
+                }
+            } else if (key.UnicodeChar == CHAR_TAB) {
+                UINTN n;
+                for (n = 0; n < 4; ++n) {
+                    if (EFI_ERROR(editor_insert_char(&ed, L' '))) {
+                        set_status(&ed, L"Out of memory");
+                        break;
+                    }
+                    changed = TRUE;
+                }
+            } else if (key.UnicodeChar >= 32 && key.UnicodeChar <= 126) {
+                if (EFI_ERROR(editor_insert_char(&ed, key.UnicodeChar))) {
+                    set_status(&ed, L"Out of memory");
+                } else {
+                    changed = TRUE;
                 }
             }
-        } else if (key.UnicodeChar >= 32 && key.UnicodeChar <= 126) {
-            if (EFI_ERROR(editor_insert_char(&ed, key.UnicodeChar))) {
-                set_status(&ed, L"Out of memory");
+
+            if (changed) {
+                editor_scroll(&ed);
+                if (prev_row_off != ed.row_off || prev_col_off != ed.col_off ||
+                    prev_row_count != ed.row_count || prev_cy != ed.cy) {
+                    editor_refresh(&ed);
+                } else {
+                    editor_refresh_current_row(&ed);
+                }
+            } else {
+                editor_refresh_cursor(&ed);
             }
         }
-        editor_refresh(&ed);
     }
 
     uefi_call_wrapper(st->ConOut->ClearScreen, 1, st->ConOut);

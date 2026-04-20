@@ -1,0 +1,4 @@
+NAME: BOOTX64.EFI
+TYPE: Pgrm
+DESC: MiniOS Shell
+USAGE: Run BOOTX64.EFI from /EFI
