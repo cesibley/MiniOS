@@ -45,9 +45,55 @@ static INTN is_meta_suffix(CHAR16 *name) {
            (name[len - 1] == L'a' || name[len - 1] == L'A');
 }
 
+static CHAR16 upcase16(CHAR16 c) {
+    if (c >= L'a' && c <= L'z') return (CHAR16)(c - (L'a' - L'A'));
+    return c;
+}
+
+static INTN str_eq_ci16(CHAR16 *a, CHAR16 *b) {
+    while (*a && *b) {
+        if (upcase16(*a) != upcase16(*b)) return 0;
+        a++;
+        b++;
+    }
+    return (*a == 0 && *b == 0);
+}
+
 static INTN is_hidden_meta_file(CHAR16 *name) {
     if (name == NULL || name[0] != L'.') return 0;
     return is_meta_suffix(name);
+}
+
+static INTN is_meta_dir_name(CHAR16 *name) {
+    if (name == NULL) return 0;
+    return str_eq_ci16(name, L".meta");
+}
+
+static INTN is_path_sep(CHAR16 c);
+
+static INTN path_contains_meta_dir(CHAR16 *path) {
+    CHAR16 *segment;
+    if (path == NULL) return 0;
+
+    while (*path) {
+        while (*path && is_path_sep(*path)) path++;
+        if (*path == 0) break;
+        segment = path;
+        while (*path && !is_path_sep(*path)) path++;
+        if (*path) {
+            CHAR16 saved = *path;
+            *path = 0;
+            if (is_meta_dir_name(segment)) {
+                *path = saved;
+                return 1;
+            }
+            *path = saved;
+            path++;
+        } else if (is_meta_dir_name(segment)) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static CHAR16 *skip_spaces(CHAR16 *s) {
@@ -188,9 +234,9 @@ static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_pat
     base = path_basename(file_path);
     if (base == NULL || *base == 0) return;
     if (StrCmp(dir_part, L"\\") == 0) {
-        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.%s.meta", base);
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.meta\\%s.meta", base);
     } else {
-        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"%s\\.%s.meta", dir_part, base);
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"%s\\.meta\\%s.meta", dir_part, base);
     }
 }
 
@@ -520,7 +566,7 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
     }
 
     if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
-        if (target != NULL && is_hidden_meta_file(path_basename(target))) {
+        if (target != NULL && path_contains_meta_dir(target)) {
             Print(L"\r\nHidden metadata files are not shown.");
             if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
             uefi_call_wrapper(root->Close, 1, root);
@@ -556,7 +602,7 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
         if (size == 0) {
             break;
         }
-        if (is_hidden_meta_file(info->FileName)) {
+        if (is_meta_dir_name(info->FileName) || is_hidden_meta_file(info->FileName)) {
             continue;
         }
         if (show_meta && !(info->Attribute & EFI_FILE_DIRECTORY)) {
@@ -749,7 +795,7 @@ static VOID shell_delete_path(CHAR16 *path, EFI_HANDLE ImageHandle, EFI_SYSTEM_T
         } else {
             Print(L"\r\nDeleted '%s'", path);
         }
-        if (!is_directory && !is_hidden_meta_file(path_basename(path))) {
+        if (!is_directory && !path_contains_meta_dir(path)) {
             build_meta_path(path, meta_path, INPUT_MAX);
             if (meta_path[0] != 0) {
                 status = uefi_call_wrapper(root->Open, 5, root, &meta_file, meta_path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
@@ -1060,12 +1106,17 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         if (has_efi_ext(line)) {
             resolve_path(cwd, line, resolved, INPUT_MAX);
         } else {
+            UINTN i = 0;
             if (StrLen(line) + StrLen(L".EFI") + 1 > INPUT_MAX) {
                 Print(L"\r\nCommand too long.");
                 return;
             }
             StrnCpy(autorun, line, INPUT_MAX - 1);
             autorun[INPUT_MAX - 1] = 0;
+            while (autorun[i] != 0) {
+                autorun[i] = upcase16(autorun[i]);
+                i++;
+            }
             StrCat(autorun, L".EFI");
             resolve_path(cwd, autorun, resolved, INPUT_MAX);
         }

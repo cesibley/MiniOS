@@ -22,6 +22,20 @@ static INTN is_path_sep(CHAR16 c) {
     return c == L'\\' || c == L'/';
 }
 
+static CHAR16 upcase16(CHAR16 c) {
+    if (c >= L'a' && c <= L'z') return (CHAR16)(c - (L'a' - L'A'));
+    return c;
+}
+
+static BOOLEAN str_eq_ci16(CHAR16 *a, CHAR16 *b) {
+    while (*a && *b) {
+        if (upcase16(*a) != upcase16(*b)) return FALSE;
+        a++;
+        b++;
+    }
+    return (*a == 0 && *b == 0);
+}
+
 static VOID normalize_path_seps(CHAR16 *path) {
     while (path != NULL && *path) {
         if (*path == L'/') *path = L'\\';
@@ -70,9 +84,9 @@ static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_pat
     base = path_basename(file_path);
     if (base == NULL || *base == 0) return;
     if (StrCmp(dir_part, L"\\") == 0) {
-        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.%s.meta", base);
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.meta\\%s.meta", base);
     } else {
-        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"%s\\.%s.meta", dir_part, base);
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"%s\\.meta\\%s.meta", dir_part, base);
     }
 }
 
@@ -271,8 +285,28 @@ static EFI_STATUS read_meta_file(EFI_FILE_HANDLE root, CHAR16 *meta_path,
 
 static EFI_STATUS write_meta_file(EFI_FILE_HANDLE root, CHAR16 *meta_path,
                                   CHAR8 *data, UINTN size) {
+    CHAR16 dir_path[INPUT_MAX];
+    UINTN i;
+    EFI_FILE_HANDLE dir = NULL;
     EFI_FILE_HANDLE file;
     EFI_STATUS status;
+
+    StrnCpy(dir_path, meta_path, INPUT_MAX - 1);
+    dir_path[INPUT_MAX - 1] = 0;
+    for (i = StrLen(dir_path); i > 0; i--) {
+        if (is_path_sep(dir_path[i - 1])) {
+            dir_path[i - 1] = 0;
+            break;
+        }
+    }
+
+    if (dir_path[0] != 0) {
+        status = uefi_call_wrapper(root->Open, 5, root, &dir, dir_path,
+                                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                                   EFI_FILE_DIRECTORY);
+        if (EFI_ERROR(status)) return status;
+        uefi_call_wrapper(dir->Close, 1, dir);
+    }
 
     status = uefi_call_wrapper(root->Open, 5, root, &file, meta_path,
                                EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
@@ -391,12 +425,48 @@ static EFI_STATUS upsert_meta(EFI_FILE_HANDLE root, CHAR16 *meta_path,
 
 static EFI_STATUS ensure_meta_for_missing_file(EFI_FILE_HANDLE root, CHAR16 *file_path) {
     EFI_FILE_HANDLE file;
+    EFI_FILE_HANDLE meta_dir;
     EFI_STATUS status;
+    CHAR16 dir_path[INPUT_MAX];
+    CHAR16 parent[INPUT_MAX];
+    UINTN i;
+    UINTN slash_idx = 0;
 
     status = uefi_call_wrapper(root->Open, 5, root, &file, file_path,
                                EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
     if (EFI_ERROR(status)) return status;
     uefi_call_wrapper(file->Close, 1, file);
+
+    StrnCpy(dir_path, file_path, INPUT_MAX - 1);
+    dir_path[INPUT_MAX - 1] = 0;
+    for (i = StrLen(dir_path); i > 0; i--) {
+        if (is_path_sep(dir_path[i - 1])) {
+            slash_idx = i - 1;
+            break;
+        }
+    }
+
+    if (slash_idx == 0) {
+        StrCpy(parent, L"\\");
+    } else {
+        for (i = 0; i < slash_idx && i + 1 < INPUT_MAX; i++) parent[i] = dir_path[i];
+        parent[i] = 0;
+    }
+
+    if (str_eq_ci16(parent, L"\\")) {
+        StrCpy(dir_path, L"\\.meta");
+    } else {
+        SPrint(dir_path, sizeof(dir_path), L"%s\\.meta", parent);
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &meta_dir, dir_path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                               EFI_FILE_DIRECTORY);
+    if (!EFI_ERROR(status)) {
+        uefi_call_wrapper(meta_dir->Close, 1, meta_dir);
+    } else {
+        return status;
+    }
     return EFI_SUCCESS;
 }
 
