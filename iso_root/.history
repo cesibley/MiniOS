@@ -3,3 +3,6 @@ list
 list -m
 meta meta.efi
 sunmap
+list -m
+list
+help

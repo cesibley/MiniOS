@@ -65,6 +65,11 @@ static INTN is_hidden_meta_file(CHAR16 *name) {
     return is_meta_suffix(name);
 }
 
+static INTN is_dotfile_name(CHAR16 *name) {
+    if (name == NULL) return 0;
+    return name[0] == L'.';
+}
+
 static INTN is_meta_dir_name(CHAR16 *name) {
     if (name == NULL) return 0;
     return str_eq_ci16(name, L".meta");
@@ -726,8 +731,8 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
     }
 
     if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
-        if (target != NULL && path_contains_meta_dir(target)) {
-            Print(L"\r\nHidden metadata files are not shown.");
+        if (target != NULL && (path_contains_meta_dir(target) || is_dotfile_name(path_basename(target)))) {
+            Print(L"\r\nHidden files are not shown.");
             if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
             uefi_call_wrapper(root->Close, 1, root);
             return;
@@ -762,7 +767,7 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
         if (size == 0) {
             break;
         }
-        if (is_meta_dir_name(info->FileName) || is_hidden_meta_file(info->FileName)) {
+        if (is_dotfile_name(info->FileName)) {
             continue;
         }
         if (show_meta && !(info->Attribute & EFI_FILE_DIRECTORY)) {
