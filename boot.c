@@ -445,7 +445,7 @@ static VOID print_padded_ascii(CHAR8 *text, UINTN width) {
 static VOID shell_help(VOID) {
     Print(L"\r\nCommands:\r\n");
     Print(L"  help               - show this help\r\n");
-    Print(L"  cls                - clear screen\r\n");
+    Print(L"  clear              - clear screen\r\n");
     Print(L"  echo TEXT          - print TEXT\r\n");
     Print(L"  goto [PATH]        - change current directory\r\n");
     Print(L"  list [-m] [PATH]   - list directory or file info (-m shows metadata)\r\n");
@@ -1093,7 +1093,7 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         return;
     }
 
-    if (str_eq(line, L"cls")) {
+    if (str_eq_ci16(line, L"CLEAR")) {
         shell_cls(SystemTable);
         return;
     }

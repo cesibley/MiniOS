@@ -14,7 +14,7 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 ### Built-in shell commands
 
 - `help` — show the built-in command list.
-- `cls` — clear the screen and reset cursor position.
+- `clear` — clear the screen and reset cursor position.
 - `echo TEXT` — print `TEXT` exactly as entered.
 - `goto [PATH]` — change the current working directory (uses `\` root by default).
 - `list [-m] [PATH]` — list entries for a directory or file path; metadata columns are shown only with `-m`.
