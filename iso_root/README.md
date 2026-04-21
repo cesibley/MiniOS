@@ -21,7 +21,6 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `read FILE` — display the contents of `FILE`.
 - `write FILE TEXT` — overwrite `FILE` with `TEXT`.
 - `delete FILE` — delete a file.
-- `rename SRC DST` — rename a file and its metadata sidecar in the same directory.
 - `make DIR` — create a directory.
 - `make -f FILE` — create an empty file.
 - `rmdir DIR` — remove an empty directory.
@@ -86,7 +85,7 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `EDIT.EFI`
 - `VIEW.EFI`
 
-All EFI binaries are built directly into `iso_root/`, so they are immediately runnable in the QEMU FAT drive layout without extra copy steps.
+`EDIT.EFI` is also copied into `iso_root/` during its build rule so it is immediately runnable in the QEMU FAT drive layout.
 
 ## Run with the current QEMU configuration
 
@@ -131,7 +130,7 @@ run GOPQUERY.EFI set 2
 
 ## Demo programs and sample files in `iso_root/`
 
-After `make`, all EFI apps are built directly into `iso_root/` so they can be launched directly from MiniOS. The repository also includes sample data files there:
+After `make`, all EFI apps are copied into `iso_root/` so they can be launched directly from MiniOS. The repository also includes sample data files there:
 
 - `test.txt` — quick text file for `read`, `write`, `VIEW.EFI`, and `EDIT.EFI`
 - `gettysburg.txt` — larger text sample for `read`/`edit`

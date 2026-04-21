@@ -202,6 +202,83 @@ static CHAR16 *path_basename(CHAR16 *path) {
     return base;
 }
 
+static VOID path_dirname(CHAR16 *path, CHAR16 *out, UINTN out_len) {
+    UINTN len;
+    INTN slash_pos = -1;
+    UINTN i;
+
+    if (out_len == 0) return;
+    out[0] = 0;
+    if (path == NULL || *path == 0) {
+        StrnCpy(out, L"\\", out_len - 1);
+        out[out_len - 1] = 0;
+        return;
+    }
+
+    len = StrLen(path);
+    for (i = 0; i < len; i++) {
+        if (is_path_sep(path[i])) slash_pos = (INTN)i;
+    }
+
+    if (slash_pos <= 0) {
+        StrnCpy(out, L"\\", out_len - 1);
+        out[out_len - 1] = 0;
+        return;
+    }
+
+    if ((UINTN)slash_pos >= out_len) slash_pos = (INTN)out_len - 1;
+    for (i = 0; i < (UINTN)slash_pos; i++) {
+        CHAR16 c = path[i];
+        out[i] = is_path_sep(c) ? L'\\' : c;
+    }
+    out[slash_pos] = 0;
+}
+
+static EFI_STATUS rename_open_handle(EFI_FILE_HANDLE handle, CHAR16 *new_name,
+                                     EFI_SYSTEM_TABLE *SystemTable) {
+    UINTN old_info_size = SIZE_OF_EFI_FILE_INFO + sizeof(CHAR16) * INPUT_MAX;
+    EFI_FILE_INFO *old_info = NULL;
+    EFI_FILE_INFO *new_info = NULL;
+    UINTN new_name_bytes;
+    UINTN new_info_size;
+    EFI_STATUS status;
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, old_info_size, (VOID **)&old_info);
+    if (EFI_ERROR(status)) return status;
+
+    status = uefi_call_wrapper(handle->GetInfo, 4, handle, &gEfiFileInfoGuid, &old_info_size, old_info);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, old_info);
+        return status;
+    }
+
+    new_name_bytes = (StrLen(new_name) + 1) * sizeof(CHAR16);
+    new_info_size = SIZE_OF_EFI_FILE_INFO + new_name_bytes;
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, new_info_size, (VOID **)&new_info);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, old_info);
+        return status;
+    }
+
+    SetMem(new_info, new_info_size, 0);
+    new_info->Size = new_info_size;
+    new_info->FileSize = old_info->FileSize;
+    new_info->PhysicalSize = old_info->PhysicalSize;
+    new_info->CreateTime = old_info->CreateTime;
+    new_info->LastAccessTime = old_info->LastAccessTime;
+    new_info->ModificationTime = old_info->ModificationTime;
+    new_info->Attribute = old_info->Attribute;
+    StrCpy(new_info->FileName, new_name);
+
+    status = uefi_call_wrapper(handle->SetInfo, 4, handle, &gEfiFileInfoGuid, new_info_size, new_info);
+
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, new_info);
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, old_info);
+    return status;
+}
+
 static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_path_len) {
     CHAR16 dir_part[INPUT_MAX];
     CHAR16 *base;
@@ -369,6 +446,7 @@ static VOID shell_help(VOID) {
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
     Print(L"  delete PATH        - delete a file or empty directory\r\n");
+    Print(L"  rename SRC DST     - rename file and matching metadata sidecar\r\n");
     Print(L"  make DIR           - create a directory\r\n");
     Print(L"  make -f FILE       - create an empty file\r\n");
     Print(L"  free               - display total, used, and free memory + disk\r\n");
@@ -377,6 +455,87 @@ static VOID shell_help(VOID) {
     Print(L"  reboot             - reboot system via UEFI ResetSystem\r\n");
     Print(L"  halt               - stop here forever\r\n");
     Print(L"\r\nTip: Up/Down browse history, Left/Right move cursor, Ins toggles insert/overwrite.\r\n");
+}
+
+static VOID shell_rename_path(CHAR16 *src_path, CHAR16 *dst_path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE src_handle;
+    EFI_FILE_HANDLE meta_handle;
+    EFI_STATUS status;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN info_size = sizeof(info_buf);
+    BOOLEAN is_directory = FALSE;
+    CHAR16 src_dir[INPUT_MAX];
+    CHAR16 dst_dir[INPUT_MAX];
+    CHAR16 src_meta_path[INPUT_MAX];
+    CHAR16 dst_meta_path[INPUT_MAX];
+    CHAR16 *dst_name;
+
+    if (path_contains_meta_dir(src_path) || path_contains_meta_dir(dst_path)) {
+        Print(L"\r\nrename does not support explicit .meta paths.");
+        return;
+    }
+
+    path_dirname(src_path, src_dir, INPUT_MAX);
+    path_dirname(dst_path, dst_dir, INPUT_MAX);
+    if (!str_eq_ci16(src_dir, dst_dir)) {
+        Print(L"\r\nrename only supports renaming within the same directory.");
+        return;
+    }
+
+    dst_name = path_basename(dst_path);
+    if (dst_name == NULL || *dst_name == 0) {
+        Print(L"\r\nUsage: rename SRC DST");
+        return;
+    }
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &src_handle, src_path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open '%s': %r", src_path, status);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(src_handle->GetInfo, 4, src_handle, &GenericFileInfo, &info_size, info);
+    if (!EFI_ERROR(status)) is_directory = (info->Attribute & EFI_FILE_DIRECTORY) != 0;
+
+    status = rename_open_handle(src_handle, dst_name, SystemTable);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nrename failed for '%s': %r", src_path, status);
+        uefi_call_wrapper(src_handle->Close, 1, src_handle);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    uefi_call_wrapper(src_handle->Close, 1, src_handle);
+    Print(L"\r\nRenamed '%s' -> '%s'", src_path, dst_path);
+
+    if (!is_directory) {
+        build_meta_path(src_path, src_meta_path, INPUT_MAX);
+        build_meta_path(dst_path, dst_meta_path, INPUT_MAX);
+        if (src_meta_path[0] != 0 && dst_meta_path[0] != 0) {
+            status = uefi_call_wrapper(root->Open, 5, root, &meta_handle, src_meta_path,
+                                       EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+            if (!EFI_ERROR(status)) {
+                status = rename_open_handle(meta_handle, path_basename(dst_meta_path), SystemTable);
+                if (!EFI_ERROR(status)) {
+                    Print(L"\r\nRenamed metadata '%s' -> '%s'", src_meta_path, dst_meta_path);
+                } else {
+                    Print(L"\r\nMetadata rename failed for '%s': %r", src_meta_path, status);
+                }
+                uefi_call_wrapper(meta_handle->Close, 1, meta_handle);
+            }
+        }
+    }
+
+    uefi_call_wrapper(root->Close, 1, root);
 }
 
 static VOID shell_cls(EFI_SYSTEM_TABLE *SystemTable) {
@@ -1038,6 +1197,38 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
         }
         resolve_path(cwd, arg, resolved, INPUT_MAX);
         shell_delete_path(resolved, ImageHandle, SystemTable);
+        return;
+    }
+
+    if (starts_with(line, L"rename ")) {
+        CHAR16 *src;
+        CHAR16 *dst;
+        CHAR16 src_resolved[INPUT_MAX];
+        CHAR16 dst_resolved[INPUT_MAX];
+
+        arg = skip_spaces(line + 7);
+        if (*arg == 0) {
+            Print(L"\r\nUsage: rename SRC DST");
+            return;
+        }
+
+        src = arg;
+        while (*arg && *arg != L' ') arg++;
+        if (*arg == 0) {
+            Print(L"\r\nUsage: rename SRC DST");
+            return;
+        }
+
+        *arg = 0;
+        dst = skip_spaces(arg + 1);
+        if (*dst == 0) {
+            Print(L"\r\nUsage: rename SRC DST");
+            return;
+        }
+
+        resolve_path(cwd, src, src_resolved, INPUT_MAX);
+        resolve_path(cwd, dst, dst_resolved, INPUT_MAX);
+        shell_rename_path(src_resolved, dst_resolved, ImageHandle, SystemTable);
         return;
     }
 

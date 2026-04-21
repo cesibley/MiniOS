@@ -20,38 +20,60 @@ LDFLAGS   := -nostdlib -znocombreloc -T $(EFILDS) \
              -shared -Bsymbolic
 
 TARGET    := BOOTX64.EFI
+ISO_ROOT  := iso_root
+BOOT_PATH := $(ISO_ROOT)/$(TARGET)
 BUILD_DIR := build
 INTERMED  := $(BUILD_DIR)/boot.so
 OBJECTS   := $(BUILD_DIR)/boot.o
 PI_TARGET := PI.EFI
+PI_PATH := $(ISO_ROOT)/$(PI_TARGET)
 PI_INTERMED := $(BUILD_DIR)/pi.so
 PI_OBJECTS := $(BUILD_DIR)/pi.o
 GFX_TARGET := GFXTEST.EFI
+GFX_PATH := $(ISO_ROOT)/$(GFX_TARGET)
 GFX_INTERMED := $(BUILD_DIR)/gfxtest.so
 GFX_OBJECTS := $(BUILD_DIR)/gfxtest.o
 CLOCK_TARGET := CLOCKX64.EFI
+CLOCK_PATH := $(ISO_ROOT)/$(CLOCK_TARGET)
 CLOCK_INTERMED := $(BUILD_DIR)/clock.so
 CLOCK_OBJECTS := $(BUILD_DIR)/clock.o
 EDIT_TARGET := EDIT.EFI
+EDIT_PATH := $(ISO_ROOT)/$(EDIT_TARGET)
 EDIT_INTERMED := $(BUILD_DIR)/edit.so
 EDIT_OBJECTS := $(BUILD_DIR)/edit.o
 GFXCLOCK_TARGET := GFXCLOCK.EFI
+GFXCLOCK_PATH := $(ISO_ROOT)/$(GFXCLOCK_TARGET)
 GFXCLOCK_INTERMED := $(BUILD_DIR)/gfxclock.so
 GFXCLOCK_OBJECTS := $(BUILD_DIR)/gfxclock.o
 SUNMAP_TARGET := SUNMAP.EFI
+SUNMAP_PATH := $(ISO_ROOT)/$(SUNMAP_TARGET)
 SUNMAP_INTERMED := $(BUILD_DIR)/sunmap.so
 SUNMAP_OBJECTS := $(BUILD_DIR)/sunmap.o
 GOPQUERY_TARGET := GOPQUERY.EFI
+GOPQUERY_PATH := $(ISO_ROOT)/$(GOPQUERY_TARGET)
 GOPQUERY_INTERMED := $(BUILD_DIR)/gopquery.so
 GOPQUERY_OBJECTS := $(BUILD_DIR)/gopquery.o
 VIEW_TARGET := VIEW.EFI
+VIEW_PATH := $(ISO_ROOT)/$(VIEW_TARGET)
 VIEW_INTERMED := $(BUILD_DIR)/view.so
 VIEW_OBJECTS := $(BUILD_DIR)/view.o
 META_TARGET := META.EFI
+META_PATH := $(ISO_ROOT)/$(META_TARGET)
 META_INTERMED := $(BUILD_DIR)/meta.so
 META_OBJECTS := $(BUILD_DIR)/meta.o
 
-all: check $(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(EDIT_TARGET) $(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(VIEW_TARGET) $(META_TARGET)
+all: check $(BOOT_PATH) $(PI_PATH) $(GFX_PATH) $(CLOCK_PATH) $(EDIT_PATH) $(GFXCLOCK_PATH) $(SUNMAP_PATH) $(GOPQUERY_PATH) $(VIEW_PATH) $(META_PATH)
+
+$(TARGET): $(BOOT_PATH)
+$(PI_TARGET): $(PI_PATH)
+$(GFX_TARGET): $(GFX_PATH)
+$(CLOCK_TARGET): $(CLOCK_PATH)
+$(EDIT_TARGET): $(EDIT_PATH)
+$(GFXCLOCK_TARGET): $(GFXCLOCK_PATH)
+$(SUNMAP_TARGET): $(SUNMAP_PATH)
+$(GOPQUERY_TARGET): $(GOPQUERY_PATH)
+$(VIEW_TARGET): $(VIEW_PATH)
+$(META_TARGET): $(META_PATH)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -63,39 +85,40 @@ check:
 $(BUILD_DIR):
 	mkdir -p $@
 
+$(ISO_ROOT):
+	mkdir -p $@
+
 $(BUILD_DIR)/boot.o: boot.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(INTERMED): $(OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(TARGET): $(INTERMED)
+$(BOOT_PATH): $(INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	mkdir -p iso_root/EFI/BOOT
-	cp -f $@ iso_root/$@
-	cp -f $@ iso_root/EFI/BOOT/$@
+	mkdir -p $(ISO_ROOT)/EFI/BOOT
+	cp -f $@ $(ISO_ROOT)/EFI/BOOT/$(TARGET)
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(TARGET) \
-	      $(PI_OBJECTS) $(PI_INTERMED) $(PI_TARGET) \
-	      $(GFX_OBJECTS) $(GFX_INTERMED) $(GFX_TARGET) \
-	      $(CLOCK_OBJECTS) $(CLOCK_INTERMED) $(CLOCK_TARGET) \
-	      $(EDIT_OBJECTS) $(EDIT_INTERMED) $(EDIT_TARGET) \
-	      $(GFXCLOCK_OBJECTS) $(GFXCLOCK_INTERMED) $(GFXCLOCK_TARGET) \
-	      $(SUNMAP_OBJECTS) $(SUNMAP_INTERMED) $(SUNMAP_TARGET) \
-	      $(GOPQUERY_OBJECTS) $(GOPQUERY_INTERMED) $(GOPQUERY_TARGET) \
-	      $(VIEW_OBJECTS) $(VIEW_INTERMED) $(VIEW_TARGET) \
-	      $(META_OBJECTS) $(META_INTERMED) $(META_TARGET) \
-	      iso_root/$(TARGET) iso_root/$(PI_TARGET) iso_root/$(GFX_TARGET) \
-	      iso_root/$(CLOCK_TARGET) iso_root/$(EDIT_TARGET) \
-	      iso_root/$(GFXCLOCK_TARGET) iso_root/$(SUNMAP_TARGET) \
-	      iso_root/$(GOPQUERY_TARGET) iso_root/$(VIEW_TARGET) \
-	      iso_root/$(META_TARGET) \
-	      iso_root/EFI/BOOT/$(TARGET)
+	rm -f $(PI_OBJECTS) $(PI_INTERMED) \
+	      $(GFX_OBJECTS) $(GFX_INTERMED) \
+	      $(CLOCK_OBJECTS) $(CLOCK_INTERMED) \
+	      $(EDIT_OBJECTS) $(EDIT_INTERMED) \
+	      $(GFXCLOCK_OBJECTS) $(GFXCLOCK_INTERMED) \
+	      $(SUNMAP_OBJECTS) $(SUNMAP_INTERMED) \
+	      $(GOPQUERY_OBJECTS) $(GOPQUERY_INTERMED) \
+	      $(VIEW_OBJECTS) $(VIEW_INTERMED) \
+	      $(META_OBJECTS) $(META_INTERMED) \
+	      $(BOOT_PATH) $(PI_PATH) $(GFX_PATH) \
+	      $(CLOCK_PATH) $(EDIT_PATH) \
+	      $(GFXCLOCK_PATH) $(SUNMAP_PATH) \
+	      $(GOPQUERY_PATH) $(VIEW_PATH) \
+	      $(META_PATH) \
+	      $(ISO_ROOT)/EFI/BOOT/$(TARGET)
 
 run-info:
 	@echo "Copy $(TARGET) to:"
@@ -125,12 +148,11 @@ $(BUILD_DIR)/pi.o: pi.c | $(BUILD_DIR)
 $(PI_INTERMED): $(PI_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(PI_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(PI_TARGET): $(PI_INTERMED)
+$(PI_PATH): $(PI_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
 $(BUILD_DIR)/gfxtest.o: gfxtest.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -138,12 +160,11 @@ $(BUILD_DIR)/gfxtest.o: gfxtest.c | $(BUILD_DIR)
 $(GFX_INTERMED): $(GFX_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(GFX_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(GFX_TARGET): $(GFX_INTERMED)
+$(GFX_PATH): $(GFX_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
 $(BUILD_DIR)/clock.o: clock.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -151,12 +172,11 @@ $(BUILD_DIR)/clock.o: clock.c | $(BUILD_DIR)
 $(CLOCK_INTERMED): $(CLOCK_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(CLOCK_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(CLOCK_TARGET): $(CLOCK_INTERMED)
+$(CLOCK_PATH): $(CLOCK_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
 
 $(BUILD_DIR)/edit.o: edit.c | $(BUILD_DIR)
@@ -165,12 +185,11 @@ $(BUILD_DIR)/edit.o: edit.c | $(BUILD_DIR)
 $(EDIT_INTERMED): $(EDIT_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(EDIT_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(EDIT_TARGET): $(EDIT_INTERMED)
+$(EDIT_PATH): $(EDIT_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
 $(BUILD_DIR)/gfxclock.o: gfxclock.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -178,12 +197,11 @@ $(BUILD_DIR)/gfxclock.o: gfxclock.c | $(BUILD_DIR)
 $(GFXCLOCK_INTERMED): $(GFXCLOCK_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(GFXCLOCK_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(GFXCLOCK_TARGET): $(GFXCLOCK_INTERMED)
+$(GFXCLOCK_PATH): $(GFXCLOCK_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
 $(BUILD_DIR)/sunmap.o: sunmap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -191,12 +209,11 @@ $(BUILD_DIR)/sunmap.o: sunmap.c | $(BUILD_DIR)
 $(SUNMAP_INTERMED): $(SUNMAP_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(SUNMAP_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(SUNMAP_TARGET): $(SUNMAP_INTERMED)
+$(SUNMAP_PATH): $(SUNMAP_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
 $(BUILD_DIR)/gopquery.o: gopquery.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -204,14 +221,15 @@ $(BUILD_DIR)/gopquery.o: gopquery.c | $(BUILD_DIR)
 $(GOPQUERY_INTERMED): $(GOPQUERY_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(GOPQUERY_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(GOPQUERY_TARGET): $(GOPQUERY_INTERMED)
+$(GOPQUERY_PATH): $(GOPQUERY_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
-.PHONY: all clean check run-info
+.PHONY: all clean check run-info \
+	$(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(EDIT_TARGET) \
+	$(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(VIEW_TARGET) $(META_TARGET)
 
 
 $(BUILD_DIR)/view.o: view.c | $(BUILD_DIR)
@@ -220,12 +238,11 @@ $(BUILD_DIR)/view.o: view.c | $(BUILD_DIR)
 $(VIEW_INTERMED): $(VIEW_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(VIEW_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(VIEW_TARGET): $(VIEW_INTERMED)
+$(VIEW_PATH): $(VIEW_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
 
 
 $(BUILD_DIR)/meta.o: meta.c | $(BUILD_DIR)
@@ -234,9 +251,8 @@ $(BUILD_DIR)/meta.o: meta.c | $(BUILD_DIR)
 $(META_INTERMED): $(META_OBJECTS)
 	$(LD) $(LDFLAGS) $(CRT0) $(META_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
 
-$(META_TARGET): $(META_INTERMED)
+$(META_PATH): $(META_INTERMED) | $(ISO_ROOT)
 	$(OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
-	cp -f $@ iso_root/$@
