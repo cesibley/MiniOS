@@ -5,6 +5,7 @@
 #define INPUT_MAX 256
 #define FILE_CHUNK 128
 #define HISTORY_SIZE 16
+#define HISTORY_FILE_PATH L"\\.history"
 
 static VOID print_prompt(EFI_SYSTEM_TABLE *SystemTable) {
     uefi_call_wrapper(SystemTable->ConOut->EnableCursor, 2, SystemTable->ConOut, TRUE);
@@ -1367,20 +1368,20 @@ static VOID redraw_input(EFI_SYSTEM_TABLE *SystemTable,
     set_cursor_from_prompt(SystemTable, prompt_col, prompt_row, cursor);
 }
 
-static VOID history_add(CHAR16 history[HISTORY_SIZE][INPUT_MAX], UINTN *history_count, CHAR16 *line) {
+static BOOLEAN history_add(CHAR16 history[HISTORY_SIZE][INPUT_MAX], UINTN *history_count, CHAR16 *line) {
     UINTN i;
 
-    if (line == NULL || line[0] == 0) return;
+    if (line == NULL || line[0] == 0) return FALSE;
 
     if (*history_count > 0 && StrCmp(history[*history_count - 1], line) == 0) {
-        return;
+        return FALSE;
     }
 
     if (*history_count < HISTORY_SIZE) {
         StrnCpy(history[*history_count], line, INPUT_MAX - 1);
         history[*history_count][INPUT_MAX - 1] = 0;
         (*history_count)++;
-        return;
+        return TRUE;
     }
 
     for (i = 1; i < HISTORY_SIZE; i++) {
@@ -1389,7 +1390,119 @@ static VOID history_add(CHAR16 history[HISTORY_SIZE][INPUT_MAX], UINTN *history_
 
     StrnCpy(history[HISTORY_SIZE - 1], line, INPUT_MAX - 1);
     history[HISTORY_SIZE - 1][INPUT_MAX - 1] = 0;
+    return TRUE;
 }
+
+static VOID load_history_file(CHAR16 history[HISTORY_SIZE][INPUT_MAX], UINTN *history_count,
+                              EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE file;
+    EFI_FILE_HANDLE create_file;
+    EFI_STATUS status;
+    CHAR8 chunk[FILE_CHUNK];
+    CHAR16 line[INPUT_MAX];
+    UINTN line_len = 0;
+
+    line[0] = 0;
+    *history_count = 0;
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) return;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, HISTORY_FILE_PATH, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) {
+        status = uefi_call_wrapper(root->Open, 5, root, &create_file, HISTORY_FILE_PATH,
+                                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+        if (!EFI_ERROR(status)) {
+            uefi_call_wrapper(create_file->Close, 1, create_file);
+        }
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    while (1) {
+        UINTN size = FILE_CHUNK;
+        UINTN i;
+
+        status = uefi_call_wrapper(file->Read, 3, file, &size, chunk);
+        if (EFI_ERROR(status) || size == 0) break;
+
+        for (i = 0; i < size; i++) {
+            CHAR8 c = chunk[i];
+
+            if (c == '\r') continue;
+            if (c == '\n') {
+                line[line_len] = 0;
+                history_add(history, history_count, line);
+                line_len = 0;
+                continue;
+            }
+
+            if (line_len < INPUT_MAX - 1) {
+                line[line_len++] = (CHAR16)(UINT8)c;
+            }
+        }
+    }
+
+    if (line_len > 0) {
+        line[line_len] = 0;
+        history_add(history, history_count, line);
+    }
+
+    uefi_call_wrapper(file->Close, 1, file);
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
+static VOID append_history_file(CHAR16 *line, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE file;
+    EFI_STATUS status;
+    CHAR8 out[INPUT_MAX + 2];
+    UINTN len = 0;
+    EFI_FILE_INFO *info = NULL;
+    UINTN info_size = SIZE_OF_EFI_FILE_INFO + sizeof(CHAR16) * INPUT_MAX;
+
+    if (line == NULL || line[0] == 0) return;
+
+    while (line[len] && len < INPUT_MAX - 1) {
+        out[len] = (CHAR8)(line[len] & 0xFF);
+        len++;
+    }
+    out[len++] = '\r';
+    out[len++] = '\n';
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) return;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, HISTORY_FILE_PATH,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, info_size, (VOID **)&info);
+    if (!EFI_ERROR(status)) {
+        status = uefi_call_wrapper(file->GetInfo, 4, file, &gEfiFileInfoGuid, &info_size, info);
+    }
+    if (!EFI_ERROR(status)) {
+        status = uefi_call_wrapper(file->SetPosition, 2, file, info->FileSize);
+    }
+    if (!EFI_ERROR(status)) {
+        status = uefi_call_wrapper(file->Write, 3, file, &len, out);
+        if (!EFI_ERROR(status)) {
+            uefi_call_wrapper(file->Flush, 1, file);
+        }
+    }
+
+    if (info != NULL) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, info);
+    }
+    uefi_call_wrapper(file->Close, 1, file);
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
 static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN max_len,
                             CHAR16 history[HISTORY_SIZE][INPUT_MAX], UINTN history_count) {
     EFI_INPUT_KEY key;
@@ -1556,15 +1669,20 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     Print(L"MiniOS UEFI shell\r\n");
     Print(L"Type 'help' for commands.\r\n");
     StrCpy(cwd, L"\\");
+    load_history_file(history, &history_count, ImageHandle, SystemTable);
 
     while (1) {
+        BOOLEAN history_added;
         line[0] = 0;
         print_prompt(SystemTable);
         read_line(SystemTable, line, INPUT_MAX, history, history_count);
         StrnCpy(history_line, line, INPUT_MAX - 1);
         history_line[INPUT_MAX - 1] = 0;
         execute_command(line, cwd, ImageHandle, SystemTable);
-        history_add(history, &history_count, history_line);
+        history_added = history_add(history, &history_count, history_line);
+        if (history_added) {
+            append_history_file(history_line, ImageHandle, SystemTable);
+        }
     }
 
     return EFI_SUCCESS;

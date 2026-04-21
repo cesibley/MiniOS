@@ -1,0 +1,5 @@
+help
+list
+list -m
+meta meta.efi
+sunmap
