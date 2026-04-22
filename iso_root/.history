@@ -14,3 +14,13 @@ clear
 CLEAR
 help
 meta
+list
+gopquery
+gopquery s 7
+gotquery set 7
+gopquery set 7
+gopquery/?
+gopquery ?
+gopquery
+clear
+help
