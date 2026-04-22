@@ -24,3 +24,5 @@ gopquery ?
 gopquery
 clear
 help
+list -m
+help

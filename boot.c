@@ -1605,6 +1605,19 @@ static EFI_STATUS read_line(EFI_SYSTEM_TABLE *SystemTable, CHAR16 *buffer, UINTN
             continue;
         }
 
+        if (key.ScanCode == SCAN_ESC) {
+            UINTN old_len = len;
+
+            history_index = -1;
+            scratch[0] = 0;
+            len = 0;
+            cursor = 0;
+            buffer[0] = 0;
+            redraw_input(SystemTable, prompt_col, prompt_row, old_len, buffer, len, cursor);
+            rendered_len = 0;
+            continue;
+        }
+
         if (key.ScanCode == SCAN_DOWN) {
             UINTN old_len = len;
 
