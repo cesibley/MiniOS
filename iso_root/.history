@@ -33,3 +33,6 @@ list *.efi
 list ?I.efi
 help
 list -m
+meta
+lisr -m
+list -m

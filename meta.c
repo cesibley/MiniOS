@@ -27,6 +27,38 @@ static CHAR16 upcase16(CHAR16 c) {
     return c;
 }
 
+static BOOLEAN has_wildcards16(CHAR16 *s) {
+    while (s != NULL && *s != 0) {
+        if (*s == L'*' || *s == L'?') return TRUE;
+        s++;
+    }
+    return FALSE;
+}
+
+static BOOLEAN wildcard_match_ci16(CHAR16 *pattern, CHAR16 *text) {
+    while (*pattern != 0) {
+        if (*pattern == L'*') {
+            pattern++;
+            if (*pattern == 0) return TRUE;
+            while (*text != 0) {
+                if (wildcard_match_ci16(pattern, text)) return TRUE;
+                text++;
+            }
+            return wildcard_match_ci16(pattern, text);
+        }
+        if (*pattern == L'?') {
+            if (*text == 0) return FALSE;
+            pattern++;
+            text++;
+            continue;
+        }
+        if (upcase16(*pattern) != upcase16(*text)) return FALSE;
+        pattern++;
+        text++;
+    }
+    return *text == 0;
+}
+
 static BOOLEAN str_eq_ci16(CHAR16 *a, CHAR16 *b) {
     while (*a && *b) {
         if (upcase16(*a) != upcase16(*b)) return FALSE;
@@ -470,10 +502,109 @@ static EFI_STATUS ensure_meta_for_missing_file(EFI_FILE_HANDLE root, CHAR16 *fil
     return EFI_SUCCESS;
 }
 
+static BOOLEAN split_directory_and_pattern(CHAR16 *path_in, CHAR16 *dir_out, UINTN dir_len,
+                                           CHAR16 *pattern_out, UINTN pattern_len) {
+    INTN slash_pos = -1;
+    UINTN i;
+    UINTN path_len;
+
+    if (path_in == NULL || *path_in == 0 || dir_len == 0 || pattern_len == 0) return FALSE;
+
+    dir_out[0] = 0;
+    pattern_out[0] = 0;
+    path_len = StrLen(path_in);
+    for (i = 0; i < path_len; i++) {
+        if (is_path_sep(path_in[i])) slash_pos = (INTN)i;
+    }
+
+    if (slash_pos < 0) {
+        StrCpy(dir_out, L"\\");
+        StrnCpy(pattern_out, path_in, pattern_len - 1);
+        pattern_out[pattern_len - 1] = 0;
+        return pattern_out[0] != 0;
+    }
+
+    if (slash_pos == 0) {
+        StrCpy(dir_out, L"\\");
+    } else {
+        UINTN slash_idx = (UINTN)slash_pos;
+        UINTN copy_len = slash_idx;
+        if (copy_len >= dir_len) copy_len = dir_len - 1;
+        for (i = 0; i < copy_len; i++) {
+            CHAR16 c = path_in[i];
+            dir_out[i] = is_path_sep(c) ? L'\\' : c;
+        }
+        dir_out[copy_len] = 0;
+    }
+
+    StrnCpy(pattern_out, &path_in[slash_pos + 1], pattern_len - 1);
+    pattern_out[pattern_len - 1] = 0;
+    return pattern_out[0] != 0;
+}
+
+static EFI_STATUS upsert_meta_wildcard(EFI_FILE_HANDLE root, EFI_SYSTEM_TABLE *SystemTable,
+                                       CHAR16 *path_pattern, CHAR8 *key, CHAR8 *value) {
+    EFI_FILE_HANDLE dir = NULL;
+    EFI_STATUS status;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN size;
+    CHAR16 dir_path[INPUT_MAX];
+    CHAR16 name_pattern[INPUT_MAX];
+    CHAR16 file_path[INPUT_MAX];
+    CHAR16 meta_path[INPUT_MAX];
+    UINTN updated_count = 0;
+
+    if (!split_directory_and_pattern(path_pattern, dir_path, INPUT_MAX, name_pattern, INPUT_MAX)) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &dir, dir_path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) return status;
+
+    status = uefi_call_wrapper(dir->SetPosition, 2, dir, 0);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(dir->Close, 1, dir);
+        return status;
+    }
+
+    while (1) {
+        size = sizeof(info_buf);
+        status = uefi_call_wrapper(dir->Read, 3, dir, &size, info);
+        if (EFI_ERROR(status) || size == 0) break;
+        if (info->Attribute & EFI_FILE_DIRECTORY) continue;
+        if (!wildcard_match_ci16(name_pattern, info->FileName)) continue;
+
+        if (str_eq_ci16(dir_path, L"\\")) {
+            SPrint(file_path, sizeof(file_path), L"\\%s", info->FileName);
+        } else {
+            SPrint(file_path, sizeof(file_path), L"%s\\%s", dir_path, info->FileName);
+        }
+
+        build_meta_path(file_path, meta_path, INPUT_MAX);
+        if (meta_path[0] == 0) continue;
+
+        status = upsert_meta(root, meta_path, SystemTable, key, value);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nFailed updating '%s': %r", file_path, status);
+            continue;
+        }
+        updated_count++;
+        Print(L"\r\nUpdated '%s': %a: %a", file_path, key, value);
+    }
+
+    uefi_call_wrapper(dir->Close, 1, dir);
+    if (updated_count == 0) {
+        Print(L"\r\nNo matches for '%s'", path_pattern);
+        return EFI_NOT_FOUND;
+    }
+    return EFI_SUCCESS;
+}
+
 static VOID print_usage(VOID) {
     Print(L"\r\nUsage:\r\n");
     Print(L"  META <filename>\r\n");
-    Print(L"  META -a <filename> <meta>=<text>\r\n");
+    Print(L"  META -a <filename|pattern> <meta>=<text>\r\n");
 }
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
@@ -504,15 +635,19 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     }
 
     if (args.add_mode) {
-        status = ensure_meta_for_missing_file(root, args.file_path);
-        if (EFI_ERROR(status)) {
-            Print(L"\r\nFailed to create file '%s': %r", args.file_path, status);
+        if (has_wildcards16(args.file_path)) {
+            status = upsert_meta_wildcard(root, SystemTable, args.file_path, args.key, args.value);
         } else {
-            status = upsert_meta(root, meta_path, SystemTable, args.key, args.value);
+            status = ensure_meta_for_missing_file(root, args.file_path);
             if (EFI_ERROR(status)) {
-                Print(L"\r\nFailed to update metadata '%s': %r", meta_path, status);
+                Print(L"\r\nFailed to create file '%s': %r", args.file_path, status);
             } else {
-                Print(L"\r\nUpdated metadata: %a: %a", args.key, args.value);
+                status = upsert_meta(root, meta_path, SystemTable, args.key, args.value);
+                if (EFI_ERROR(status)) {
+                    Print(L"\r\nFailed to update metadata '%s': %r", meta_path, status);
+                } else {
+                    Print(L"\r\nUpdated metadata: %a: %a", args.key, args.value);
+                }
             }
         }
     } else {
