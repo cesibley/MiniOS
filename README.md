@@ -17,7 +17,7 @@ and then shows a `MiniOS>` prompt. Use `help` to list available shell commands
 - `clear` — clear the screen and reset cursor position.
 - `echo TEXT` — print `TEXT` exactly as entered.
 - `goto [PATH]` — change the current working directory (uses `\` root by default).
-- `list [-m] [PATH]` — list entries for a directory or file path; metadata columns are shown only with `-m`.
+- `list [-m] [PATH]` — list entries for a directory or file path; `PATH` supports `*` and `?` wildcards in the final path segment. Metadata columns are shown only with `-m`.
 - `read FILE` — display the contents of `FILE`.
 - `write FILE TEXT` — overwrite `FILE` with `TEXT`.
 - `delete FILE` — delete a file.

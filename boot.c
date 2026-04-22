@@ -51,6 +51,38 @@ static CHAR16 upcase16(CHAR16 c) {
     return c;
 }
 
+static INTN has_wildcards(CHAR16 *s) {
+    while (s != NULL && *s != 0) {
+        if (*s == L'*' || *s == L'?') return 1;
+        s++;
+    }
+    return 0;
+}
+
+static INTN wildcard_match_ci16(CHAR16 *pattern, CHAR16 *text) {
+    while (*pattern != 0) {
+        if (*pattern == L'*') {
+            pattern++;
+            if (*pattern == 0) return 1;
+            while (*text != 0) {
+                if (wildcard_match_ci16(pattern, text)) return 1;
+                text++;
+            }
+            return wildcard_match_ci16(pattern, text);
+        }
+        if (*pattern == L'?') {
+            if (*text == 0) return 0;
+            pattern++;
+            text++;
+            continue;
+        }
+        if (upcase16(*pattern) != upcase16(*text)) return 0;
+        pattern++;
+        text++;
+    }
+    return *text == 0;
+}
+
 static INTN str_eq_ci16(CHAR16 *a, CHAR16 *b) {
     while (*a && *b) {
         if (upcase16(*a) != upcase16(*b)) return 0;
@@ -448,7 +480,7 @@ static VOID shell_help(VOID) {
     Print(L"  clear              - clear screen\r\n");
     Print(L"  echo TEXT          - print TEXT\r\n");
     Print(L"  goto [PATH]        - change current directory\r\n");
-    Print(L"  list [-m] [PATH]   - list directory or file info (-m shows metadata)\r\n");
+    Print(L"  list [-m] [PATH]   - list directory/file info (PATH supports * and ?)\r\n");
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
     Print(L"  delete PATH        - delete a file or empty directory\r\n");
@@ -701,8 +733,24 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
     UINTN size;
     CHAR16 *target = path;
     CHAR16 entry_path[INPUT_MAX];
+    CHAR16 wildcard_dir[INPUT_MAX];
+    CHAR16 wildcard_pattern[INPUT_MAX];
+    CHAR16 target_copy[INPUT_MAX];
     CHAR8 type_meta[64];
     CHAR8 desc_meta[160];
+    INTN wildcard_mode = 0;
+    UINTN match_count = 0;
+
+    if (target != NULL && *target != 0) {
+        StrnCpy(target_copy, target, INPUT_MAX - 1);
+        target_copy[INPUT_MAX - 1] = 0;
+        path_dirname(target_copy, wildcard_dir, INPUT_MAX);
+        StrnCpy(wildcard_pattern, path_basename(target_copy), INPUT_MAX - 1);
+        wildcard_pattern[INPUT_MAX - 1] = 0;
+        if (wildcard_pattern[0] != 0 && has_wildcards(wildcard_pattern)) {
+            wildcard_mode = 1;
+        }
+    }
 
     status = open_root(ImageHandle, SystemTable, &root);
     if (EFI_ERROR(status)) {
@@ -710,7 +758,23 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
         return;
     }
 
-    if (target == NULL || *target == 0) {
+    if (wildcard_mode) {
+        if (path_contains_meta_dir(wildcard_dir)) {
+            Print(L"\r\nHidden files are not shown.");
+            uefi_call_wrapper(root->Close, 1, root);
+            return;
+        }
+        if (wildcard_dir[0] == 0 || StrCmp(wildcard_dir, L"\\") == 0) {
+            handle = root;
+        } else {
+            status = uefi_call_wrapper(root->Open, 5, root, &handle, wildcard_dir, EFI_FILE_MODE_READ, 0);
+            if (EFI_ERROR(status)) {
+                Print(L"\r\nFailed to open '%s': %r", wildcard_dir, status);
+                uefi_call_wrapper(root->Close, 1, root);
+                return;
+            }
+        }
+    } else if (target == NULL || *target == 0) {
         handle = root;
     } else {
         status = uefi_call_wrapper(root->Open, 5, root, &handle, target, EFI_FILE_MODE_READ, 0);
@@ -730,7 +794,14 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
         return;
     }
 
-    if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
+    if (wildcard_mode) {
+        if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
+            Print(L"\r\nNot a directory: %s", wildcard_dir);
+            if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
+            uefi_call_wrapper(root->Close, 1, root);
+            return;
+        }
+    } else if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
         if (target != NULL && (path_contains_meta_dir(target) || is_dotfile_name(path_basename(target)))) {
             Print(L"\r\nHidden files are not shown.");
             if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
@@ -770,11 +841,15 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
         if (is_dotfile_name(info->FileName)) {
             continue;
         }
+        if (wildcard_mode && !wildcard_match_ci16(wildcard_pattern, info->FileName)) {
+            continue;
+        }
         if (show_meta && !(info->Attribute & EFI_FILE_DIRECTORY)) {
-            if (target == NULL || *target == 0 || StrCmp(target, L"\\") == 0) {
+            CHAR16 *meta_base = wildcard_mode ? wildcard_dir : target;
+            if (meta_base == NULL || *meta_base == 0 || StrCmp(meta_base, L"\\") == 0) {
                 SPrint(entry_path, sizeof(entry_path), L"\\%s", info->FileName);
             } else {
-                SPrint(entry_path, sizeof(entry_path), L"%s\\%s", target, info->FileName);
+                SPrint(entry_path, sizeof(entry_path), L"%s\\%s", meta_base, info->FileName);
             }
             load_meta_for_file(entry_path, root, SystemTable, type_meta, sizeof(type_meta), desc_meta, sizeof(desc_meta));
         } else {
@@ -782,6 +857,11 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
             desc_meta[0] = 0;
         }
         print_file_info_line(info, type_meta, desc_meta, show_meta);
+        match_count++;
+    }
+
+    if (wildcard_mode && match_count == 0) {
+        Print(L"\r\nNo matches for '%s'", target);
     }
 
     if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);

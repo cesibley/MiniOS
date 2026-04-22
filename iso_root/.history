@@ -26,3 +26,10 @@ clear
 help
 list -m
 help
+list m*
+help
+list meta.efi
+list *.efi
+list ?I.efi
+help
+list -m
