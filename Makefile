@@ -19,45 +19,45 @@ CFLAGS    := -I$(EFIINC) -I$(EFIINCARCH) \
 LDFLAGS   := -nostdlib -znocombreloc -T $(EFILDS) \
              -shared -Bsymbolic
 
-TARGET    := BOOTX64.EFI
+TARGET    := bootx64.efi
 ISO_ROOT  := iso_root
 BOOT_PATH := $(ISO_ROOT)/$(TARGET)
 BUILD_DIR := build
 INTERMED  := $(BUILD_DIR)/boot.so
 OBJECTS   := $(BUILD_DIR)/boot.o
-PI_TARGET := PI.EFI
+PI_TARGET := pi.efi
 PI_PATH := $(ISO_ROOT)/$(PI_TARGET)
 PI_INTERMED := $(BUILD_DIR)/pi.so
 PI_OBJECTS := $(BUILD_DIR)/pi.o
-GFX_TARGET := GFXTEST.EFI
+GFX_TARGET := gfxtest.efi
 GFX_PATH := $(ISO_ROOT)/$(GFX_TARGET)
 GFX_INTERMED := $(BUILD_DIR)/gfxtest.so
 GFX_OBJECTS := $(BUILD_DIR)/gfxtest.o
-CLOCK_TARGET := CLOCKX64.EFI
+CLOCK_TARGET := clockx64.efi
 CLOCK_PATH := $(ISO_ROOT)/$(CLOCK_TARGET)
 CLOCK_INTERMED := $(BUILD_DIR)/clock.so
 CLOCK_OBJECTS := $(BUILD_DIR)/clock.o
-EDIT_TARGET := EDIT.EFI
+EDIT_TARGET := edit.efi
 EDIT_PATH := $(ISO_ROOT)/$(EDIT_TARGET)
 EDIT_INTERMED := $(BUILD_DIR)/edit.so
 EDIT_OBJECTS := $(BUILD_DIR)/edit.o
-GFXCLOCK_TARGET := GFXCLOCK.EFI
+GFXCLOCK_TARGET := gfxclock.efi
 GFXCLOCK_PATH := $(ISO_ROOT)/$(GFXCLOCK_TARGET)
 GFXCLOCK_INTERMED := $(BUILD_DIR)/gfxclock.so
 GFXCLOCK_OBJECTS := $(BUILD_DIR)/gfxclock.o
-SUNMAP_TARGET := SUNMAP.EFI
+SUNMAP_TARGET := sunmap.efi
 SUNMAP_PATH := $(ISO_ROOT)/$(SUNMAP_TARGET)
 SUNMAP_INTERMED := $(BUILD_DIR)/sunmap.so
 SUNMAP_OBJECTS := $(BUILD_DIR)/sunmap.o
-GOPQUERY_TARGET := GOPQUERY.EFI
+GOPQUERY_TARGET := gopquery.efi
 GOPQUERY_PATH := $(ISO_ROOT)/$(GOPQUERY_TARGET)
 GOPQUERY_INTERMED := $(BUILD_DIR)/gopquery.so
 GOPQUERY_OBJECTS := $(BUILD_DIR)/gopquery.o
-VIEW_TARGET := VIEW.EFI
+VIEW_TARGET := view.efi
 VIEW_PATH := $(ISO_ROOT)/$(VIEW_TARGET)
 VIEW_INTERMED := $(BUILD_DIR)/view.so
 VIEW_OBJECTS := $(BUILD_DIR)/view.o
-META_TARGET := META.EFI
+META_TARGET := meta.efi
 META_PATH := $(ISO_ROOT)/$(META_TARGET)
 META_INTERMED := $(BUILD_DIR)/meta.so
 META_OBJECTS := $(BUILD_DIR)/meta.o
@@ -122,25 +122,25 @@ clean:
 
 run-info:
 	@echo "Copy $(TARGET) to:"
-	@echo "  EFI/BOOT/BOOTX64.EFI"
+	@echo "  EFI/BOOT/bootx64.efi"
 	@echo "Optional PI tool:"
-	@echo "  EFI/BOOT/PI.EFI"
+	@echo "  EFI/BOOT/pi.efi"
 	@echo "Optional graphics tool:"
-	@echo "  EFI/BOOT/GFXTEST.EFI"
+	@echo "  EFI/BOOT/gfxtest.efi"
 	@echo "Optional clock tool:"
-	@echo "  EFI/BOOT/CLOCKX64.EFI"
+	@echo "  EFI/BOOT/clockx64.efi"
 	@echo "Optional text editor:"
-	@echo "  EFI/BOOT/EDIT.EFI"
+	@echo "  EFI/BOOT/edit.efi"
 	@echo "Optional full-screen graphics clock:"
-	@echo "  EFI/BOOT/GFXCLOCK.EFI"
+	@echo "  EFI/BOOT/gfxclock.efi"
 	@echo "Optional world illumination map demo:"
-	@echo "  EFI/BOOT/SUNMAP.EFI"
+	@echo "  EFI/BOOT/sunmap.efi"
 	@echo "Optional GOP query tool:"
-	@echo "  EFI/BOOT/GOPQUERY.EFI"
+	@echo "  EFI/BOOT/gopquery.efi"
 	@echo "Optional universal viewer:"
-	@echo "  EFI/BOOT/VIEW.EFI"
+	@echo "  EFI/BOOT/view.efi"
 	@echo "Optional metadata editor:"
-	@echo "  EFI/BOOT/META.EFI"
+	@echo "  EFI/BOOT/meta.efi"
 
 $(BUILD_DIR)/pi.o: pi.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

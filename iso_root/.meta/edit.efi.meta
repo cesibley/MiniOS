@@ -1,4 +1,4 @@
-NAME: EDIT.EFI
+NAME: edit.efi
 TYPE: Program
 DESC: Full-Screen Text Editor
 USAGE: edit <filename>

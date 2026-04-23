@@ -46,3 +46,9 @@ meta -a pi.efi "desc=Calculate PI to a specified number of decimal places
 list -m
 meta -a pi.efi "desc=Calculate Digits of PI
 list -m
+list
+list -m
+view corvette.jpg
+dir
+clear
+help
