@@ -1,4 +1,5 @@
 NAME: BOOTX64.EFI
-TYPE: Executable
+TYPE: Program
 DESC: MiniOS Shell
 USAGE: Run BOOTX64.EFI from /EFI
+FI

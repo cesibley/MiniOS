@@ -1,4 +1,4 @@
 NAME: SUNMAP.EFI
-TYPE: Executable
+TYPE: Program
 DESC: Display graphical Map of Earth Sun Track
 USAGE: Run SUNMAP.EFI from the MiniOS shell

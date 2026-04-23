@@ -36,3 +36,13 @@ list -m
 meta
 lisr -m
 list -m
+meta -a *.efi type=Program
+list -m
+list
+list -m
+list
+list -m
+meta -a pi.efi "desc=Calculate PI to a specified number of decimal places
+list -m
+meta -a pi.efi "desc=Calculate Digits of PI
+list -m

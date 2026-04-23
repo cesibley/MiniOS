@@ -1,4 +1,5 @@
 NAME: GOPQUERY.EFI
-TYPE: Executable
+TYPE: Program
 DESC: Display Avaiable Graphic Modes
 USAGE: Run GOPQUERY.EFI from the MiniOS shell
+

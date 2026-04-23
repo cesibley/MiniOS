@@ -1,4 +1,5 @@
 NAME: EDIT.EFI
-TYPE: Executable
+TYPE: Program
 DESC: Full-Screen Text Editor
 USAGE: edit <filename>
+

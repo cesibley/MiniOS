@@ -601,6 +601,57 @@ static EFI_STATUS upsert_meta_wildcard(EFI_FILE_HANDLE root, EFI_SYSTEM_TABLE *S
     return EFI_SUCCESS;
 }
 
+static EFI_STATUS resolve_existing_path_case(EFI_FILE_HANDLE root, CHAR16 *path_in,
+                                             CHAR16 *path_out, UINTN path_out_len) {
+    EFI_FILE_HANDLE dir = NULL;
+    EFI_STATUS status;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN size;
+    CHAR16 dir_path[INPUT_MAX];
+    CHAR16 name_part[INPUT_MAX];
+    BOOLEAN found = FALSE;
+
+    if (path_out_len == 0) return EFI_INVALID_PARAMETER;
+    path_out[0] = 0;
+
+    if (!split_directory_and_pattern(path_in, dir_path, INPUT_MAX, name_part, INPUT_MAX)) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &dir, dir_path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) return status;
+
+    status = uefi_call_wrapper(dir->SetPosition, 2, dir, 0);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(dir->Close, 1, dir);
+        return status;
+    }
+
+    while (1) {
+        size = sizeof(info_buf);
+        status = uefi_call_wrapper(dir->Read, 3, dir, &size, info);
+        if (EFI_ERROR(status) || size == 0) break;
+        if (info->Attribute & EFI_FILE_DIRECTORY) continue;
+        if (!str_eq_ci16(name_part, info->FileName)) continue;
+
+        if (str_eq_ci16(dir_path, L"\\")) {
+            SPrint(path_out, path_out_len * sizeof(CHAR16), L"\\%s", info->FileName);
+        } else {
+            SPrint(path_out, path_out_len * sizeof(CHAR16), L"%s\\%s", dir_path, info->FileName);
+        }
+        found = TRUE;
+        break;
+    }
+
+    uefi_call_wrapper(dir->Close, 1, dir);
+    if (found) return EFI_SUCCESS;
+
+    StrnCpy(path_out, path_in, path_out_len - 1);
+    path_out[path_out_len - 1] = 0;
+    return EFI_NOT_FOUND;
+}
+
 static VOID print_usage(VOID) {
     Print(L"\r\nUsage:\r\n");
     Print(L"  META <filename>\r\n");
@@ -611,6 +662,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_STATUS status;
     EFI_FILE_HANDLE root;
     META_ARGS args;
+    CHAR16 resolved_path[INPUT_MAX];
     CHAR16 meta_path[INPUT_MAX];
 
     InitializeLib(ImageHandle, SystemTable);
@@ -622,16 +674,28 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         return EFI_INVALID_PARAMETER;
     }
 
-    build_meta_path(args.file_path, meta_path, INPUT_MAX);
-    if (meta_path[0] == 0) {
-        Print(L"\r\nInvalid file path '%s'", args.file_path);
-        return EFI_INVALID_PARAMETER;
-    }
-
     status = open_root(ImageHandle, SystemTable, &root);
     if (EFI_ERROR(status)) {
         Print(L"\r\nFailed to open filesystem: %r", status);
         return status;
+    }
+
+    status = resolve_existing_path_case(root, args.file_path, resolved_path, INPUT_MAX);
+    if (EFI_ERROR(status) && status != EFI_NOT_FOUND) {
+        uefi_call_wrapper(root->Close, 1, root);
+        Print(L"\r\nFailed to resolve path '%s': %r", args.file_path, status);
+        return status;
+    }
+    if (!EFI_ERROR(status)) {
+        StrnCpy(args.file_path, resolved_path, INPUT_MAX - 1);
+        args.file_path[INPUT_MAX - 1] = 0;
+    }
+
+    build_meta_path(args.file_path, meta_path, INPUT_MAX);
+    if (meta_path[0] == 0) {
+        uefi_call_wrapper(root->Close, 1, root);
+        Print(L"\r\nInvalid file path '%s'", args.file_path);
+        return EFI_INVALID_PARAMETER;
     }
 
     if (args.add_mode) {

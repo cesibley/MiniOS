@@ -1,4 +1,0 @@
-NAME: PI.EFI
-TYPE: Executable
-DESC: Calculate Digits of PI
-USAGE: Run CALCPI.EFI from the MiniOS shell

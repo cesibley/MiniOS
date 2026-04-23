@@ -1,4 +1,4 @@
 NAME: VIEW.EFI
-TYPE: Executable
-DESC: Multi-Format File Viewer
-USAGE: view -h <filename> 
+TYPE: Program
+DESC: Multi Format File Veiwer
+USAGE: 
