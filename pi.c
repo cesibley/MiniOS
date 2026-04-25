@@ -62,6 +62,26 @@ static VOID print_digit(UINTN digit) {
     Print(L"%c", (CHAR16)(L'0' + digit));
 }
 
+static VOID emit_pi_stream_digit(UINTN digit,
+                                 BOOLEAN *skipped_leading_zero,
+                                 UINTN *pi_digits_printed,
+                                 UINTN decimal_places) {
+    if (!*skipped_leading_zero) {
+        *skipped_leading_zero = TRUE;
+        return;
+    }
+
+    if (*pi_digits_printed >= decimal_places + 1) {
+        return;
+    }
+
+    print_digit(digit);
+    if (*pi_digits_printed == 0) {
+        Print(L".");
+    }
+    (*pi_digits_printed)++;
+}
+
 static EFI_STATUS print_pi_digits(UINTN digits, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_STATUS status;
     UINTN len;
@@ -69,12 +89,14 @@ static EFI_STATUS print_pi_digits(UINTN digits, EFI_SYSTEM_TABLE *SystemTable) {
     UINTN i, j;
     UINTN nines = 0;
     UINTN predigit = 0;
+    BOOLEAN skipped_leading_zero = FALSE;
+    UINTN pi_digits_printed = 0;
 
     if (digits == 0 || digits > MAX_DIGITS) {
         return EFI_INVALID_PARAMETER;
     }
 
-    len = (digits * 10) / 3 + 1;
+    len = ((digits + 2) * 10) / 3 + 1;
     status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
                                EfiLoaderData, len * sizeof(UINTN), (VOID **)&a);
     if (EFI_ERROR(status)) {
@@ -85,8 +107,8 @@ static EFI_STATUS print_pi_digits(UINTN digits, EFI_SYSTEM_TABLE *SystemTable) {
         a[i] = 2;
     }
 
-    Print(L"\r\npi ~= 3.");
-    for (j = 0; j < digits; j++) {
+    Print(L"\r\npi ~= ");
+    for (j = 0; j <= digits + 1; j++) {
         UINTN q = 0;
 
         for (i = len; i > 0; i--) {
@@ -102,22 +124,22 @@ static EFI_STATUS print_pi_digits(UINTN digits, EFI_SYSTEM_TABLE *SystemTable) {
         if (q == 9) {
             nines++;
         } else if (q == 10) {
-            print_digit(predigit + 1);
+            emit_pi_stream_digit(predigit + 1, &skipped_leading_zero, &pi_digits_printed, digits);
             while (nines > 0) {
-                print_digit(0);
+                emit_pi_stream_digit(0, &skipped_leading_zero, &pi_digits_printed, digits);
                 nines--;
             }
             predigit = 0;
         } else {
-            print_digit(predigit);
+            emit_pi_stream_digit(predigit, &skipped_leading_zero, &pi_digits_printed, digits);
             predigit = q;
             while (nines > 0) {
-                print_digit(9);
+                emit_pi_stream_digit(9, &skipped_leading_zero, &pi_digits_printed, digits);
                 nines--;
             }
         }
     }
-    print_digit(predigit);
+    emit_pi_stream_digit(predigit, &skipped_leading_zero, &pi_digits_printed, digits);
     Print(L"\r\n");
 
     uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, a);

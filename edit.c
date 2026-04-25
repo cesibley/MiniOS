@@ -641,6 +641,125 @@ static EFI_STATUS open_root(EFI_HANDLE image, EFI_SYSTEM_TABLE *st, EFI_FILE_HAN
     return EFI_NOT_FOUND;
 }
 
+static INTN is_path_sep(CHAR16 c) {
+    return c == L'\\' || c == L'/';
+}
+
+static VOID path_dirname(CHAR16 *path, CHAR16 *out, UINTN out_len) {
+    UINTN len;
+    INTN slash_pos = -1;
+    UINTN i;
+
+    if (out_len == 0) return;
+    out[0] = 0;
+    if (path == NULL || *path == 0) {
+        StrnCpy(out, L"\\", out_len - 1);
+        out[out_len - 1] = 0;
+        return;
+    }
+
+    len = StrLen(path);
+    for (i = 0; i < len; i++) {
+        if (is_path_sep(path[i])) slash_pos = (INTN)i;
+    }
+
+    if (slash_pos <= 0) {
+        StrnCpy(out, L"\\", out_len - 1);
+        out[out_len - 1] = 0;
+        return;
+    }
+
+    if ((UINTN)slash_pos >= out_len) slash_pos = (INTN)out_len - 1;
+    for (i = 0; i < (UINTN)slash_pos; i++) {
+        out[i] = is_path_sep(path[i]) ? L'\\' : path[i];
+    }
+    out[slash_pos] = 0;
+}
+
+static CHAR16 *path_basename(CHAR16 *path) {
+    CHAR16 *base = path;
+    while (*path) {
+        if (is_path_sep(*path)) base = path + 1;
+        path++;
+    }
+    return base;
+}
+
+static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_path_len) {
+    CHAR16 dir_part[INPUT_MAX];
+    CHAR16 *base;
+    UINTN i;
+    INTN slash_pos = -1;
+    UINTN len;
+
+    if (meta_path_len == 0) return;
+    meta_path[0] = 0;
+    if (file_path == NULL || *file_path == 0) return;
+
+    len = StrLen(file_path);
+    for (i = 0; i < len; i++) {
+        if (is_path_sep(file_path[i])) slash_pos = (INTN)i;
+    }
+
+    if (slash_pos <= 0) {
+        StrCpy(dir_part, L"\\");
+    } else {
+        UINTN slash_idx = (UINTN)slash_pos;
+        if (slash_idx >= INPUT_MAX) slash_idx = INPUT_MAX - 1;
+        for (i = 0; i < slash_idx; i++) {
+            CHAR16 c = file_path[i];
+            dir_part[i] = is_path_sep(c) ? L'\\' : c;
+        }
+        dir_part[slash_idx] = 0;
+    }
+
+    base = path_basename(file_path);
+    if (base == NULL || *base == 0) return;
+    if (StrCmp(dir_part, L"\\") == 0) {
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.meta\\%s.meta", base);
+    } else {
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"%s\\.meta\\%s.meta", dir_part, base);
+    }
+}
+
+static VOID ensure_text_meta_if_missing(editor_t *ed, EFI_FILE_HANDLE root, CHAR16 *file_path) {
+    CHAR16 meta_path[INPUT_MAX];
+    CHAR16 meta_dir[INPUT_MAX];
+    EFI_FILE_HANDLE meta = NULL;
+    EFI_FILE_HANDLE meta_dir_handle = NULL;
+    EFI_STATUS status;
+    CHAR8 text_meta[] = "TYPE: Text\nHANDLER: view\n";
+    UINTN write_size = sizeof(text_meta) - 1;
+
+    if (file_path == NULL || *file_path == 0) return;
+    build_meta_path(file_path, meta_path, INPUT_MAX);
+    if (meta_path[0] == 0) return;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &meta, meta_path, EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(status)) {
+        uefi_call_wrapper(meta->Close, 1, meta);
+        return;
+    }
+
+    path_dirname(meta_path, meta_dir, INPUT_MAX);
+    status = uefi_call_wrapper(root->Open, 5, root, &meta_dir_handle, meta_dir,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_DIRECTORY);
+    if (!EFI_ERROR(status) && meta_dir_handle != NULL) {
+        uefi_call_wrapper(meta_dir_handle->Close, 1, meta_dir_handle);
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &meta, meta_path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(status)) return;
+
+    status = uefi_call_wrapper(meta->Write, 3, meta, &write_size, text_meta);
+    if (!EFI_ERROR(status)) {
+        uefi_call_wrapper(meta->Flush, 1, meta);
+    }
+    uefi_call_wrapper(meta->Close, 1, meta);
+    (void)ed;
+}
+
 static EFI_STATUS editor_load_file(editor_t *ed) {
     EFI_FILE_HANDLE root;
     EFI_FILE_HANDLE file;
@@ -820,6 +939,9 @@ static EFI_STATUS editor_save_file(editor_t *ed) {
     status = EFI_SUCCESS;
 
 done:
+    if (!EFI_ERROR(status)) {
+        ensure_text_meta_if_missing(ed, root, ed->path);
+    }
     uefi_call_wrapper(file->Close, 1, file);
     uefi_call_wrapper(root->Close, 1, root);
     return status;

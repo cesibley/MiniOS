@@ -6,6 +6,7 @@
 #define FILE_CHUNK 128
 #define HISTORY_SIZE 16
 #define HISTORY_FILE_PATH L"\\.history"
+#define LIST_META_MAX 8
 
 static VOID print_prompt(EFI_SYSTEM_TABLE *SystemTable) {
     uefi_call_wrapper(SystemTable->ConOut->EnableCursor, 2, SystemTable->ConOut, TRUE);
@@ -108,6 +109,7 @@ static INTN is_meta_dir_name(CHAR16 *name) {
 }
 
 static INTN is_path_sep(CHAR16 c);
+static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);
 
 static INTN path_contains_meta_dir(CHAR16 *path) {
     CHAR16 *segment;
@@ -137,6 +139,18 @@ static INTN path_contains_meta_dir(CHAR16 *path) {
 static CHAR16 *skip_spaces(CHAR16 *s) {
     while (*s == L' ') s++;
     return s;
+}
+
+static VOID char16_to_ascii_upper(CHAR16 *src, CHAR8 *dst, UINTN dst_len) {
+    UINTN i = 0;
+    if (dst_len == 0) return;
+    while (src != NULL && src[i] != 0 && i + 1 < dst_len) {
+        CHAR8 c = (CHAR8)(src[i] & 0xFF);
+        if (c >= 'a' && c <= 'z') c = (CHAR8)(c - ('a' - 'A'));
+        dst[i] = c;
+        i++;
+    }
+    dst[i] = 0;
 }
 
 static INTN is_path_sep(CHAR16 c) {
@@ -360,6 +374,15 @@ static CHAR8 ascii_upcase(CHAR8 c) {
     return c;
 }
 
+static INTN ascii_eq_ci(const CHAR8 *a, const char *b) {
+    while (*a != 0 && *b != 0) {
+        if (ascii_upcase(*a) != ascii_upcase((CHAR8)*b)) return 0;
+        a++;
+        b++;
+    }
+    return (*a == 0 && *b == 0);
+}
+
 static INTN ascii_starts_with_key(const CHAR8 *s, const char *key) {
     while (*key) {
         if (ascii_upcase(*s) != ascii_upcase((CHAR8)*key)) return 0;
@@ -369,7 +392,10 @@ static INTN ascii_starts_with_key(const CHAR8 *s, const char *key) {
     return 1;
 }
 
-static VOID parse_meta_line(CHAR8 *line, CHAR8 *type_out, UINTN type_len, CHAR8 *desc_out, UINTN desc_len) {
+static VOID parse_meta_line(CHAR8 *line,
+                            CHAR8 *type_out, UINTN type_len,
+                            CHAR8 *desc_out, UINTN desc_len,
+                            CHAR8 *handler_out, UINTN handler_len) {
     CHAR8 *value;
     UINTN i;
 
@@ -390,11 +416,60 @@ static VOID parse_meta_line(CHAR8 *line, CHAR8 *type_out, UINTN type_len, CHAR8 
             desc_out[i] = value[i];
         }
         desc_out[i] = 0;
+    } else if (ascii_starts_with_key(line, "HANDLER")) {
+        if (handler_out == NULL || handler_len == 0) return;
+        value = line + 7;
+        while (*value == ' ' || *value == '\t' || *value == ':' || *value == '=') value++;
+        for (i = 0; i + 1 < handler_len && value[i] && value[i] != '\r' && value[i] != '\n'; i++) {
+            handler_out[i] = value[i];
+        }
+        handler_out[i] = 0;
     }
 }
 
+static INTN ascii_key_eq_ci(CHAR8 *a, UINTN a_len, CHAR8 *b) {
+    UINTN i = 0;
+    while (i < a_len && b[i] != 0) {
+        if (ascii_upcase(a[i]) != ascii_upcase(b[i])) return 0;
+        i++;
+    }
+    return (i == a_len && b[i] == 0);
+}
+
+static VOID parse_meta_value_for_key(CHAR8 *line, CHAR8 *key, CHAR8 *value_out, UINTN value_len) {
+    CHAR8 *sep;
+    CHAR8 *key_start;
+    CHAR8 *key_end;
+    CHAR8 *value;
+    UINTN i;
+
+    if (key == NULL || key[0] == 0 || value_len == 0) return;
+
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line == 0) return;
+
+    sep = line;
+    while (*sep != 0 && *sep != ':' && *sep != '=') sep++;
+    if (*sep == 0) return;
+
+    key_start = line;
+    key_end = sep;
+    while (key_end > key_start && (key_end[-1] == ' ' || key_end[-1] == '\t')) key_end--;
+    if (!ascii_key_eq_ci(key_start, (UINTN)(key_end - key_start), key)) return;
+
+    value = sep + 1;
+    while (*value == ' ' || *value == '\t') value++;
+
+    for (i = 0; i + 1 < value_len && value[i] && value[i] != '\r' && value[i] != '\n'; i++) {
+        value_out[i] = value[i];
+    }
+    value_out[i] = 0;
+}
+
 static VOID load_meta_for_file(CHAR16 *file_path, EFI_FILE_HANDLE root, EFI_SYSTEM_TABLE *SystemTable,
-                               CHAR8 *type_out, UINTN type_len, CHAR8 *desc_out, UINTN desc_len) {
+                               CHAR8 *type_out, UINTN type_len,
+                               CHAR8 *desc_out, UINTN desc_len,
+                               CHAR8 *handler_out, UINTN handler_len) {
     CHAR16 meta_path[INPUT_MAX];
     EFI_FILE_HANDLE meta = NULL;
     EFI_STATUS status;
@@ -408,6 +483,7 @@ static VOID load_meta_for_file(CHAR16 *file_path, EFI_FILE_HANDLE root, EFI_SYST
 
     if (type_len > 0) type_out[0] = 0;
     if (desc_len > 0) desc_out[0] = 0;
+    if (handler_len > 0) handler_out[0] = 0;
 
     if (file_path == NULL || *file_path == 0) return;
     if (is_hidden_meta_file(path_basename(file_path))) return;
@@ -439,7 +515,7 @@ static VOID load_meta_for_file(CHAR16 *file_path, EFI_FILE_HANDLE root, EFI_SYST
             if (buf[i] == '\n' || buf[i] == 0) {
                 CHAR8 saved = buf[i];
                 buf[i] = 0;
-                parse_meta_line(&buf[line_start], type_out, type_len, desc_out, desc_len);
+                parse_meta_line(&buf[line_start], type_out, type_len, desc_out, desc_len, handler_out, handler_len);
                 buf[i] = saved;
                 line_start = i + 1;
             }
@@ -448,6 +524,189 @@ static VOID load_meta_for_file(CHAR16 *file_path, EFI_FILE_HANDLE root, EFI_SYST
 
     uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, buf);
     uefi_call_wrapper(meta->Close, 1, meta);
+}
+
+static VOID load_meta_value_for_file(CHAR16 *file_path, EFI_FILE_HANDLE root, EFI_SYSTEM_TABLE *SystemTable,
+                                     CHAR8 *key, CHAR8 *value_out, UINTN value_len) {
+    CHAR16 meta_path[INPUT_MAX];
+    EFI_FILE_HANDLE meta = NULL;
+    EFI_STATUS status;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN info_size = sizeof(info_buf);
+    UINTN read_size;
+    CHAR8 *buf = NULL;
+    UINTN i;
+    UINTN line_start = 0;
+
+    if (value_len > 0) value_out[0] = 0;
+    if (key == NULL || key[0] == 0) return;
+    if (file_path == NULL || *file_path == 0) return;
+    if (is_hidden_meta_file(path_basename(file_path))) return;
+
+    build_meta_path(file_path, meta_path, INPUT_MAX);
+    if (meta_path[0] == 0) return;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &meta, meta_path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) return;
+
+    status = uefi_call_wrapper(meta->GetInfo, 4, meta, &GenericFileInfo, &info_size, info);
+    if (EFI_ERROR(status) || info->FileSize == 0 || info->FileSize > 4096) {
+        uefi_call_wrapper(meta->Close, 1, meta);
+        return;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                               EfiLoaderData, (UINTN)info->FileSize + 1, (VOID **)&buf);
+    if (EFI_ERROR(status) || buf == NULL) {
+        uefi_call_wrapper(meta->Close, 1, meta);
+        return;
+    }
+
+    read_size = (UINTN)info->FileSize;
+    status = uefi_call_wrapper(meta->Read, 3, meta, &read_size, buf);
+    if (!EFI_ERROR(status) && read_size > 0) {
+        buf[read_size] = 0;
+        for (i = 0; i <= read_size; i++) {
+            if (buf[i] == '\n' || buf[i] == 0) {
+                CHAR8 saved = buf[i];
+                buf[i] = 0;
+                parse_meta_value_for_key(&buf[line_start], key, value_out, value_len);
+                buf[i] = saved;
+                line_start = i + 1;
+            }
+        }
+    }
+
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, buf);
+    uefi_call_wrapper(meta->Close, 1, meta);
+}
+
+static VOID ensure_text_meta_if_missing(EFI_FILE_HANDLE root, CHAR16 *file_path, EFI_SYSTEM_TABLE *SystemTable) {
+    CHAR16 meta_path[INPUT_MAX];
+    CHAR16 meta_dir[INPUT_MAX];
+    EFI_FILE_HANDLE meta = NULL;
+    EFI_FILE_HANDLE meta_dir_handle = NULL;
+    EFI_STATUS status;
+    CHAR8 text_meta[] = "TYPE: Text\nHANDLER: view\n";
+    UINTN write_size = sizeof(text_meta) - 1;
+
+    if (file_path == NULL || *file_path == 0) return;
+    if (path_contains_meta_dir(file_path)) return;
+
+    build_meta_path(file_path, meta_path, INPUT_MAX);
+    if (meta_path[0] == 0) return;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &meta, meta_path, EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(status)) {
+        uefi_call_wrapper(meta->Close, 1, meta);
+        return;
+    }
+
+    path_dirname(meta_path, meta_dir, INPUT_MAX);
+    status = uefi_call_wrapper(root->Open, 5, root, &meta_dir_handle, meta_dir,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, EFI_FILE_DIRECTORY);
+    if (!EFI_ERROR(status) && meta_dir_handle != NULL) {
+        uefi_call_wrapper(meta_dir_handle->Close, 1, meta_dir_handle);
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &meta, meta_path,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(status)) return;
+
+    status = uefi_call_wrapper(meta->Write, 3, meta, &write_size, text_meta);
+    if (!EFI_ERROR(status)) {
+        uefi_call_wrapper(meta->Flush, 1, meta);
+    }
+    uefi_call_wrapper(meta->Close, 1, meta);
+}
+
+static INTN is_program_meta_type(CHAR8 *type_meta) {
+    CHAR8 normalized[64];
+    UINTN src = 0;
+    UINTN dst = 0;
+
+    if (type_meta == NULL || type_meta[0] == 0) return 0;
+
+    while (type_meta[src] != 0 && dst + 1 < sizeof(normalized)) {
+        CHAR8 c = type_meta[src++];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        normalized[dst++] = c;
+    }
+    normalized[dst] = 0;
+
+    return ascii_eq_ci(normalized, "PGRM") ||
+           ascii_eq_ci(normalized, "PROGRAM") ||
+           ascii_eq_ci(normalized, "EFI") ||
+           ascii_eq_ci(normalized, "EXE");
+}
+
+static VOID ascii_to_char16_trimmed(CHAR8 *src, CHAR16 *dst, UINTN dst_len) {
+    UINTN start = 0;
+    UINTN end = 0;
+    UINTN i;
+    if (dst_len == 0) return;
+    dst[0] = 0;
+    if (src == NULL) return;
+
+    while (src[start] == ' ' || src[start] == '\t' || src[start] == '\r' || src[start] == '\n') start++;
+    end = start;
+    while (src[end] != 0) end++;
+    while (end > start &&
+           (src[end - 1] == ' ' || src[end - 1] == '\t' || src[end - 1] == '\r' || src[end - 1] == '\n')) {
+        end--;
+    }
+
+    for (i = 0; start + i < end && i + 1 < dst_len; i++) {
+        dst[i] = (CHAR16)(src[start + i] & 0xFF);
+    }
+    dst[i] = 0;
+}
+
+static INTN is_internal_command_name(CHAR16 *name) {
+    return str_eq_ci16(name, L"HELP") ||
+           str_eq_ci16(name, L"CLEAR") ||
+           str_eq_ci16(name, L"ECHO") ||
+           str_eq_ci16(name, L"GOTO") ||
+           str_eq_ci16(name, L"LIST") ||
+           str_eq_ci16(name, L"READ") ||
+           str_eq_ci16(name, L"WRITE") ||
+           str_eq_ci16(name, L"DELETE") ||
+           str_eq_ci16(name, L"RENAME") ||
+           str_eq_ci16(name, L"MAKE") ||
+           str_eq_ci16(name, L"FREE") ||
+           str_eq_ci16(name, L"RUN") ||
+           str_eq_ci16(name, L"REBOOT") ||
+           str_eq_ci16(name, L"HALT");
+}
+
+static INTN try_execute_internal_handler(CHAR16 *handler_cmd,
+                                         CHAR16 *file_arg,
+                                         CHAR16 *extra_args,
+                                         CHAR16 *cwd,
+                                         EFI_HANDLE ImageHandle,
+                                         EFI_SYSTEM_TABLE *SystemTable) {
+    CHAR16 line[INPUT_MAX];
+
+    if (!is_internal_command_name(handler_cmd)) return 0;
+    if (file_arg == NULL || file_arg[0] == 0) return 0;
+
+    if (extra_args != NULL && extra_args[0] != 0) {
+        if (StrLen(handler_cmd) + 1 + StrLen(file_arg) + 1 + StrLen(extra_args) + 1 > INPUT_MAX) {
+            Print(L"\r\nCommand too long.");
+            return 1;
+        }
+        SPrint(line, sizeof(line), L"%s %s %s", handler_cmd, file_arg, extra_args);
+    } else {
+        if (StrLen(handler_cmd) + 1 + StrLen(file_arg) + 1 > INPUT_MAX) {
+            Print(L"\r\nCommand too long.");
+            return 1;
+        }
+        SPrint(line, sizeof(line), L"%s %s", handler_cmd, file_arg);
+    }
+
+    execute_command(line, cwd, ImageHandle, SystemTable);
+    return 1;
 }
 
 static VOID print_padded_name(CHAR16 *name, UINTN width) {
@@ -480,11 +739,11 @@ static VOID shell_help(VOID) {
     Print(L"  clear              - clear screen\r\n");
     Print(L"  echo TEXT          - print TEXT\r\n");
     Print(L"  goto [PATH]        - change current directory\r\n");
-    Print(L"  list [-m] [PATH]   - list directory/file info (PATH supports * and ?)\r\n");
+    Print(L"  list [-KEY ...] [PATH] - list files (append requested metadata values)\r\n");
     Print(L"  read FILE          - print FILE contents\r\n");
     Print(L"  write FILE TEXT    - overwrite FILE with TEXT\r\n");
     Print(L"  delete PATH        - delete a file or empty directory\r\n");
-    Print(L"  rename SRC DST     - rename file and matching metadata sidecar\r\n");
+    Print(L"  rename SRC DST     - rename file(s), supports * and ? wildcards\r\n");
     Print(L"  make DIR           - create a directory\r\n");
     Print(L"  make -f FILE       - create an empty file\r\n");
     Print(L"  free               - display total, used, and free memory + disk\r\n");
@@ -493,6 +752,30 @@ static VOID shell_help(VOID) {
     Print(L"  reboot             - reboot system via UEFI ResetSystem\r\n");
     Print(L"  halt               - stop here forever\r\n");
     Print(L"\r\nTip: Up/Down browse history, Left/Right move cursor, Ins toggles insert/overwrite.\r\n");
+}
+
+static INTN apply_rename_pattern(CHAR16 *src_name, CHAR16 *dst_pattern, CHAR16 *out_name, UINTN out_len) {
+    UINTN oi = 0;
+    UINTN si = 0;
+    UINTN i = 0;
+    if (out_len == 0) return 0;
+
+    while (dst_pattern[i] != 0 && oi + 1 < out_len) {
+        if (dst_pattern[i] == L'*') {
+            while (src_name[si] != 0 && oi + 1 < out_len) {
+                out_name[oi++] = src_name[si++];
+            }
+        } else if (dst_pattern[i] == L'?') {
+            if (src_name[si] != 0) {
+                out_name[oi++] = src_name[si++];
+            }
+        } else {
+            out_name[oi++] = dst_pattern[i];
+        }
+        i++;
+    }
+    out_name[oi] = 0;
+    return dst_pattern[i] == 0;
 }
 
 static VOID shell_rename_path(CHAR16 *src_path, CHAR16 *dst_path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
@@ -573,6 +856,108 @@ static VOID shell_rename_path(CHAR16 *src_path, CHAR16 *dst_path, EFI_HANDLE Ima
         }
     }
 
+    uefi_call_wrapper(root->Close, 1, root);
+}
+
+static VOID shell_rename_wildcard(CHAR16 *src_path, CHAR16 *dst_path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    EFI_FILE_HANDLE root;
+    EFI_FILE_HANDLE dir;
+    EFI_STATUS status;
+    UINT8 info_buf[1024];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN size;
+    CHAR16 src_dir[INPUT_MAX];
+    CHAR16 dst_dir[INPUT_MAX];
+    CHAR16 src_pattern[INPUT_MAX];
+    CHAR16 dst_name[INPUT_MAX];
+    CHAR16 dst_pattern[INPUT_MAX];
+    CHAR16 src_full[INPUT_MAX];
+    CHAR16 dst_full[INPUT_MAX];
+    UINTN match_count = 0;
+    INTN dst_has_wildcards;
+
+    if (path_contains_meta_dir(src_path) || path_contains_meta_dir(dst_path)) {
+        Print(L"\r\nrename does not support explicit .meta paths.");
+        return;
+    }
+
+    path_dirname(src_path, src_dir, INPUT_MAX);
+    path_dirname(dst_path, dst_dir, INPUT_MAX);
+    if (!str_eq_ci16(src_dir, dst_dir)) {
+        Print(L"\r\nrename only supports renaming within the same directory.");
+        return;
+    }
+
+    StrnCpy(src_pattern, path_basename(src_path), INPUT_MAX - 1);
+    src_pattern[INPUT_MAX - 1] = 0;
+    StrnCpy(dst_pattern, path_basename(dst_path), INPUT_MAX - 1);
+    dst_pattern[INPUT_MAX - 1] = 0;
+    dst_has_wildcards = has_wildcards(dst_pattern);
+
+    status = open_root(ImageHandle, SystemTable, &root);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to open filesystem: %r", status);
+        return;
+    }
+
+    if (StrCmp(src_dir, L"\\") == 0 || src_dir[0] == 0) {
+        dir = root;
+    } else {
+        status = uefi_call_wrapper(root->Open, 5, root, &dir, src_dir, EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status)) {
+            Print(L"\r\nFailed to open '%s': %r", src_dir, status);
+            uefi_call_wrapper(root->Close, 1, root);
+            return;
+        }
+    }
+
+    status = uefi_call_wrapper(dir->SetPosition, 2, dir, 0);
+    if (EFI_ERROR(status)) {
+        Print(L"\r\nFailed to read directory: %r", status);
+        if (dir != root) uefi_call_wrapper(dir->Close, 1, dir);
+        uefi_call_wrapper(root->Close, 1, root);
+        return;
+    }
+
+    while (1) {
+        size = sizeof(info_buf);
+        status = uefi_call_wrapper(dir->Read, 3, dir, &size, info);
+        if (EFI_ERROR(status) || size == 0) break;
+        if (is_dotfile_name(info->FileName)) continue;
+        if (!wildcard_match_ci16(src_pattern, info->FileName)) continue;
+
+        match_count++;
+
+        if (dst_has_wildcards) {
+            if (!apply_rename_pattern(info->FileName, dst_pattern, dst_name, INPUT_MAX) || dst_name[0] == 0) {
+                Print(L"\r\nSkipping '%s' (invalid destination pattern).", info->FileName);
+                continue;
+            }
+        } else {
+            StrnCpy(dst_name, dst_pattern, INPUT_MAX - 1);
+            dst_name[INPUT_MAX - 1] = 0;
+            if (match_count > 1) {
+                Print(L"\r\nMultiple matches require wildcard(s) in destination name.");
+                break;
+            }
+        }
+
+        if (StrCmp(src_dir, L"\\") == 0 || src_dir[0] == 0) {
+            SPrint(src_full, sizeof(src_full), L"\\%s", info->FileName);
+            SPrint(dst_full, sizeof(dst_full), L"\\%s", dst_name);
+        } else {
+            SPrint(src_full, sizeof(src_full), L"%s\\%s", src_dir, info->FileName);
+            SPrint(dst_full, sizeof(dst_full), L"%s\\%s", src_dir, dst_name);
+        }
+
+        shell_rename_path(src_full, dst_full, ImageHandle, SystemTable);
+    }
+
+    if (match_count == 0) {
+        Print(L"\r\nNo matches for '%s'", src_path);
+    }
+
+    if (dir != root) uefi_call_wrapper(dir->Close, 1, dir);
     uefi_call_wrapper(root->Close, 1, root);
 }
 
@@ -700,7 +1085,7 @@ static VOID shell_free(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     shell_freedisk(ImageHandle, SystemTable);
 }
 
-static VOID print_file_info_line(EFI_FILE_INFO *info, CHAR8 *type_meta, CHAR8 *desc_meta, INTN show_meta) {
+static VOID print_file_info_line(EFI_FILE_INFO *info, CHAR8 meta_values[][160], UINTN meta_count) {
     EFI_TIME *modified = &info->ModificationTime;
     if (info->Attribute & EFI_FILE_DIRECTORY) {
         Print(L"\r\n<DIR>      %04d-%02d-%02d %02d:%02d ",
@@ -713,18 +1098,16 @@ static VOID print_file_info_line(EFI_FILE_INFO *info, CHAR8 *type_meta, CHAR8 *d
               modified->Year, modified->Month, modified->Day,
               modified->Hour, modified->Minute);
         print_padded_name(info->FileName, 15);
-        if (show_meta) {
-            Print(L" | ");
-            print_padded_ascii(type_meta, 10);
-            Print(L" | ");
-            if (desc_meta != NULL && desc_meta[0] != 0) {
-                Print(L"%a", desc_meta);
+        UINTN i;
+        for (i = 0; i < meta_count; i++) {
+            if (meta_values[i][0] != 0) {
+                Print(L" | %a", meta_values[i]);
             }
         }
     }
 }
 
-static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+static VOID shell_list_path(CHAR16 *path, CHAR8 meta_keys[][64], UINTN meta_key_count, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     EFI_FILE_HANDLE root;
     EFI_FILE_HANDLE handle;
     EFI_STATUS status;
@@ -736,8 +1119,7 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
     CHAR16 wildcard_dir[INPUT_MAX];
     CHAR16 wildcard_pattern[INPUT_MAX];
     CHAR16 target_copy[INPUT_MAX];
-    CHAR8 type_meta[64];
-    CHAR8 desc_meta[160];
+    CHAR8 key_meta[LIST_META_MAX][160];
     INTN wildcard_mode = 0;
     UINTN match_count = 0;
 
@@ -808,13 +1190,12 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
             uefi_call_wrapper(root->Close, 1, root);
             return;
         }
-        if (show_meta) {
-            load_meta_for_file(target, root, SystemTable, type_meta, sizeof(type_meta), desc_meta, sizeof(desc_meta));
-        } else {
-            type_meta[0] = 0;
-            desc_meta[0] = 0;
+        UINTN k;
+        for (k = 0; k < LIST_META_MAX; k++) key_meta[k][0] = 0;
+        for (k = 0; k < meta_key_count && k < LIST_META_MAX; k++) {
+            load_meta_value_for_file(target, root, SystemTable, meta_keys[k], key_meta[k], sizeof(key_meta[k]));
         }
-        print_file_info_line(info, type_meta, desc_meta, show_meta);
+        print_file_info_line(info, key_meta, meta_key_count);
         if (handle != root) uefi_call_wrapper(handle->Close, 1, handle);
         uefi_call_wrapper(root->Close, 1, root);
         return;
@@ -844,19 +1225,23 @@ static VOID shell_list_path(CHAR16 *path, INTN show_meta, EFI_HANDLE ImageHandle
         if (wildcard_mode && !wildcard_match_ci16(wildcard_pattern, info->FileName)) {
             continue;
         }
-        if (show_meta && !(info->Attribute & EFI_FILE_DIRECTORY)) {
+        if (!(info->Attribute & EFI_FILE_DIRECTORY)) {
             CHAR16 *meta_base = wildcard_mode ? wildcard_dir : target;
             if (meta_base == NULL || *meta_base == 0 || StrCmp(meta_base, L"\\") == 0) {
                 SPrint(entry_path, sizeof(entry_path), L"\\%s", info->FileName);
             } else {
                 SPrint(entry_path, sizeof(entry_path), L"%s\\%s", meta_base, info->FileName);
             }
-            load_meta_for_file(entry_path, root, SystemTable, type_meta, sizeof(type_meta), desc_meta, sizeof(desc_meta));
+            UINTN k;
+            for (k = 0; k < LIST_META_MAX; k++) key_meta[k][0] = 0;
+            for (k = 0; k < meta_key_count && k < LIST_META_MAX; k++) {
+                load_meta_value_for_file(entry_path, root, SystemTable, meta_keys[k], key_meta[k], sizeof(key_meta[k]));
+            }
         } else {
-            type_meta[0] = 0;
-            desc_meta[0] = 0;
+            UINTN k;
+            for (k = 0; k < LIST_META_MAX; k++) key_meta[k][0] = 0;
         }
-        print_file_info_line(info, type_meta, desc_meta, show_meta);
+        print_file_info_line(info, key_meta, meta_key_count);
         match_count++;
     }
 
@@ -997,6 +1382,7 @@ static VOID shell_write_file(CHAR16 *path, CHAR16 *text, EFI_HANDLE ImageHandle,
             Print(L"\r\nWrite completed but flush failed: %r", status);
         } else {
             Print(L"\r\nWrote %d bytes to '%s'", len, path);
+            ensure_text_meta_if_missing(root, path, SystemTable);
         }
     }
 
@@ -1161,6 +1547,7 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     CHAR16 *arg;
     CHAR16 resolved[INPUT_MAX];
     CHAR16 autorun[INPUT_MAX];
+    CHAR16 handler_args[INPUT_MAX];
 
     line = skip_spaces(line);
 
@@ -1225,24 +1612,48 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     }
 
     if (str_eq(line, L"list")) {
-        shell_list_path(cwd, 0, ImageHandle, SystemTable);
+        CHAR8 meta_keys[LIST_META_MAX][64];
+        shell_list_path(cwd, meta_keys, 0, ImageHandle, SystemTable);
         return;
     }
 
     if (starts_with(line, L"list ")) {
+        CHAR8 meta_keys[LIST_META_MAX][64];
+        UINTN meta_key_count = 0;
         arg = skip_spaces(line + 5);
-        if (str_eq(arg, L"-m")) {
-            shell_list_path(cwd, 1, ImageHandle, SystemTable);
-            return;
+
+        while (*arg == L'-') {
+            CHAR16 *key_start = arg + 1;
+            CHAR16 *next_arg = NULL;
+            while (*arg && *arg != L' ') arg++;
+            if (*arg != 0) {
+                *arg = 0;
+                next_arg = skip_spaces(arg + 1);
+            }
+            if (*key_start == 0) {
+                Print(L"\r\nUsage: list [-KEY ...] [PATH]");
+                return;
+            }
+            if (meta_key_count >= LIST_META_MAX) {
+                Print(L"\r\nToo many metadata keys (max %d).", LIST_META_MAX);
+                return;
+            }
+            char16_to_ascii_upper(key_start, meta_keys[meta_key_count], sizeof(meta_keys[meta_key_count]));
+            meta_key_count++;
+
+            if (next_arg == NULL || *next_arg == 0) {
+                arg = NULL;
+                break;
+            }
+            arg = next_arg;
         }
-        if (starts_with(arg, L"-m ")) {
-            arg = skip_spaces(arg + 2);
-            resolve_path(cwd, arg, resolved, INPUT_MAX);
-            shell_list_path(resolved, 1, ImageHandle, SystemTable);
+
+        if (arg == NULL || *arg == 0) {
+            shell_list_path(cwd, meta_keys, meta_key_count, ImageHandle, SystemTable);
             return;
         }
         resolve_path(cwd, arg, resolved, INPUT_MAX);
-        shell_list_path(resolved, 0, ImageHandle, SystemTable);
+        shell_list_path(resolved, meta_keys, meta_key_count, ImageHandle, SystemTable);
         return;
     }
 
@@ -1314,7 +1725,11 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
 
         resolve_path(cwd, src, src_resolved, INPUT_MAX);
         resolve_path(cwd, dst, dst_resolved, INPUT_MAX);
-        shell_rename_path(src_resolved, dst_resolved, ImageHandle, SystemTable);
+        if (has_wildcards(path_basename(src_resolved))) {
+            shell_rename_wildcard(src_resolved, dst_resolved, ImageHandle, SystemTable);
+        } else {
+            shell_rename_path(src_resolved, dst_resolved, ImageHandle, SystemTable);
+        }
         return;
     }
 
@@ -1345,6 +1760,12 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     if (starts_with(line, L"run ")) {
         CHAR16 *app;
         CHAR16 *args;
+        EFI_FILE_HANDLE root;
+        EFI_STATUS status;
+        CHAR8 type_meta[64];
+        CHAR8 desc_meta[2];
+        CHAR8 handler_meta[INPUT_MAX];
+        CHAR16 handler_prog[INPUT_MAX];
 
         arg = skip_spaces(line + 4);
         if (*arg == 0) {
@@ -1361,7 +1782,57 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
             args = arg;
         }
 
-        resolve_path(cwd, app, resolved, INPUT_MAX);
+        if (has_efi_ext(app)) {
+            resolve_path(cwd, app, resolved, INPUT_MAX);
+        } else {
+            resolve_path(cwd, app, resolved, INPUT_MAX);
+            status = open_root(ImageHandle, SystemTable, &root);
+            if (!EFI_ERROR(status)) {
+                load_meta_for_file(resolved, root, SystemTable,
+                                   type_meta, sizeof(type_meta),
+                                   desc_meta, sizeof(desc_meta),
+                                   handler_meta, sizeof(handler_meta));
+                uefi_call_wrapper(root->Close, 1, root);
+            } else {
+                type_meta[0] = 0;
+                handler_meta[0] = 0;
+            }
+
+            if (is_program_meta_type(type_meta)) {
+                /* Run resolved path directly. */
+            } else if (handler_meta[0] != 0) {
+                ascii_to_char16_trimmed(handler_meta, handler_prog, INPUT_MAX);
+                if (handler_prog[0] == 0) {
+                    Print(L"\r\nInvalid HANDLER metadata for '%s'.", resolved);
+                    return;
+                }
+                if (try_execute_internal_handler(handler_prog, app, (*args != 0) ? args : NULL,
+                                                 cwd, ImageHandle, SystemTable)) {
+                    return;
+                }
+                resolve_path(cwd, handler_prog, resolved, INPUT_MAX);
+
+                if (*args != 0) {
+                    if (StrLen(app) + 1 + StrLen(args) + 1 > INPUT_MAX) {
+                        Print(L"\r\nCommand too long.");
+                        return;
+                    }
+                    SPrint(handler_args, sizeof(handler_args), L"%s %s", app, args);
+                    args = handler_args;
+                } else {
+                    args = app;
+                }
+            } else {
+                if (StrLen(app) + StrLen(L".EFI") + 1 > INPUT_MAX) {
+                    Print(L"\r\nCommand too long.");
+                    return;
+                }
+                StrnCpy(autorun, app, INPUT_MAX - 1);
+                autorun[INPUT_MAX - 1] = 0;
+                StrCat(autorun, L".EFI");
+                resolve_path(cwd, autorun, resolved, INPUT_MAX);
+            }
+        }
         shell_run_file(resolved, (*args != 0) ? args : NULL, ImageHandle, SystemTable);
         return;
     }
@@ -1380,22 +1851,67 @@ static VOID execute_command(CHAR16 *line, CHAR16 *cwd, EFI_HANDLE ImageHandle, E
     }
 
     if (line[0] != 0) {
+        EFI_FILE_HANDLE root;
+        EFI_STATUS status;
+        CHAR8 type_meta[64];
+        CHAR8 desc_meta[2];
+        CHAR8 handler_meta[INPUT_MAX];
+        CHAR16 handler_prog[INPUT_MAX];
+
         if (has_efi_ext(line)) {
             resolve_path(cwd, line, resolved, INPUT_MAX);
         } else {
-            UINTN i = 0;
-            if (StrLen(line) + StrLen(L".EFI") + 1 > INPUT_MAX) {
-                Print(L"\r\nCommand too long.");
-                return;
+            resolve_path(cwd, line, resolved, INPUT_MAX);
+            status = open_root(ImageHandle, SystemTable, &root);
+            if (!EFI_ERROR(status)) {
+                load_meta_for_file(resolved, root, SystemTable,
+                                   type_meta, sizeof(type_meta),
+                                   desc_meta, sizeof(desc_meta),
+                                   handler_meta, sizeof(handler_meta));
+                uefi_call_wrapper(root->Close, 1, root);
+            } else {
+                type_meta[0] = 0;
+                handler_meta[0] = 0;
             }
-            StrnCpy(autorun, line, INPUT_MAX - 1);
-            autorun[INPUT_MAX - 1] = 0;
-            while (autorun[i] != 0) {
-                autorun[i] = upcase16(autorun[i]);
-                i++;
+
+            if (is_program_meta_type(type_meta)) {
+                /* Run resolved path directly. */
+            } else if (handler_meta[0] != 0) {
+                ascii_to_char16_trimmed(handler_meta, handler_prog, INPUT_MAX);
+                if (handler_prog[0] == 0) {
+                    Print(L"\r\nInvalid HANDLER metadata for '%s'.", resolved);
+                    return;
+                }
+                if (try_execute_internal_handler(handler_prog, line, (*arg != 0) ? arg : NULL,
+                                                 cwd, ImageHandle, SystemTable)) {
+                    return;
+                }
+                resolve_path(cwd, handler_prog, resolved, INPUT_MAX);
+                if (*arg != 0) {
+                    if (StrLen(line) + 1 + StrLen(arg) + 1 > INPUT_MAX) {
+                        Print(L"\r\nCommand too long.");
+                        return;
+                    }
+                    SPrint(handler_args, sizeof(handler_args), L"%s %s", line, arg);
+                    arg = handler_args;
+                } else {
+                    arg = line;
+                }
+            } else {
+                UINTN i = 0;
+                if (StrLen(line) + StrLen(L".EFI") + 1 > INPUT_MAX) {
+                    Print(L"\r\nCommand too long.");
+                    return;
+                }
+                StrnCpy(autorun, line, INPUT_MAX - 1);
+                autorun[INPUT_MAX - 1] = 0;
+                while (autorun[i] != 0) {
+                    autorun[i] = upcase16(autorun[i]);
+                    i++;
+                }
+                StrCat(autorun, L".EFI");
+                resolve_path(cwd, autorun, resolved, INPUT_MAX);
             }
-            StrCat(autorun, L".EFI");
-            resolve_path(cwd, autorun, resolved, INPUT_MAX);
         }
 
         shell_run_file(resolved, (*arg != 0) ? arg : NULL, ImageHandle, SystemTable);

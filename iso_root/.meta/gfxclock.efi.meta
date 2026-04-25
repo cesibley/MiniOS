@@ -1,5 +1,0 @@
-NAME: gfxclock.efi
-TYPE: Program
-DESC: Displays Graphical Clock
-USAGE: Run gfxclock.efi from the MiniOS shell
-ll

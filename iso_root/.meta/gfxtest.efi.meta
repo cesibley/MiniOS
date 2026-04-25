@@ -1,4 +1,0 @@
-NAME: gfxtest.efi
-TYPE: Program
-DESC: Display/Test Avaiable Graphic Modes
-USAGE: Run gfxtest.efi from the MiniOS shell

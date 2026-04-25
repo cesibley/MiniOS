@@ -268,6 +268,182 @@ static EFI_STATUS read_file(EFI_FILE_HANDLE root, CONST CHAR16 *path, UINT8 **da
     return EFI_SUCCESS;
 }
 
+static INTN is_path_sep(CHAR16 c) {
+    return c == L'\\' || c == L'/';
+}
+
+static CHAR16 *path_basename(CHAR16 *path) {
+    CHAR16 *base = path;
+    while (*path) {
+        if (is_path_sep(*path)) base = path + 1;
+        path++;
+    }
+    return base;
+}
+
+static VOID build_meta_path(CHAR16 *file_path, CHAR16 *meta_path, UINTN meta_path_len) {
+    CHAR16 dir_part[INPUT_MAX];
+    CHAR16 *base;
+    UINTN i;
+    INTN slash_pos = -1;
+    UINTN len;
+
+    if (meta_path_len == 0) return;
+    meta_path[0] = 0;
+    if (file_path == NULL || *file_path == 0) return;
+
+    len = StrLen(file_path);
+    for (i = 0; i < len; i++) {
+        if (is_path_sep(file_path[i])) slash_pos = (INTN)i;
+    }
+
+    if (slash_pos <= 0) {
+        StrCpy(dir_part, L"\\");
+    } else {
+        UINTN slash_idx = (UINTN)slash_pos;
+        if (slash_idx >= INPUT_MAX) slash_idx = INPUT_MAX - 1;
+        for (i = 0; i < slash_idx; i++) {
+            CHAR16 c = file_path[i];
+            dir_part[i] = is_path_sep(c) ? L'\\' : c;
+        }
+        dir_part[slash_idx] = 0;
+    }
+
+    base = path_basename(file_path);
+    if (base == NULL || *base == 0) return;
+    if (StrCmp(dir_part, L"\\") == 0) {
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"\\.meta\\%s.meta", base);
+    } else {
+        SPrint(meta_path, meta_path_len * sizeof(CHAR16), L"%s\\.meta\\%s.meta", dir_part, base);
+    }
+}
+
+static CHAR8 ascii_upcase(CHAR8 c) {
+    if (c >= 'a' && c <= 'z') return (CHAR8)(c - ('a' - 'A'));
+    return c;
+}
+
+static BOOLEAN ascii_eq_ci(CONST CHAR8 *a, CONST char *b) {
+    while (*a != 0 && *b != 0) {
+        if (ascii_upcase(*a) != ascii_upcase((CHAR8)*b)) return FALSE;
+        a++;
+        b++;
+    }
+    return (*a == 0 && *b == 0);
+}
+
+static BOOLEAN ascii_starts_with_key(CONST CHAR8 *s, CONST char *key) {
+    while (*key) {
+        if (ascii_upcase(*s) != ascii_upcase((CHAR8)*key)) return FALSE;
+        s++;
+        key++;
+    }
+    return TRUE;
+}
+
+static VOID normalize_meta_type(CHAR8 *src, CHAR8 *dst, UINTN dst_len) {
+    UINTN i = 0;
+    UINTN o = 0;
+    if (dst_len == 0) return;
+    dst[0] = 0;
+    if (src == NULL) return;
+
+    while (src[i] != 0 && o + 1 < dst_len) {
+        CHAR8 c = src[i++];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        dst[o++] = c;
+    }
+    dst[o] = 0;
+}
+
+static VOID parse_meta_type_line(CHAR8 *line, CHAR8 *type_out, UINTN type_len) {
+    CHAR8 *value;
+    UINTN i;
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line == 0) return;
+    if (!ascii_starts_with_key(line, "TYPE")) return;
+
+    value = line + 4;
+    while (*value == ' ' || *value == '\t' || *value == ':' || *value == '=') value++;
+    for (i = 0; i + 1 < type_len && value[i] && value[i] != '\r' && value[i] != '\n'; i++) {
+        type_out[i] = value[i];
+    }
+    type_out[i] = 0;
+}
+
+static VOID load_meta_type_for_file(EFI_FILE_HANDLE root, CHAR16 *file_path, CHAR8 *type_out, UINTN type_len) {
+    CHAR16 meta_path[INPUT_MAX];
+    EFI_FILE_HANDLE meta = NULL;
+    EFI_STATUS status;
+    UINT8 info_buf[512];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_buf;
+    UINTN info_size = sizeof(info_buf);
+    UINTN read_size;
+    CHAR8 *buf = NULL;
+    UINTN i;
+    UINTN line_start = 0;
+
+    if (type_len == 0) return;
+    type_out[0] = 0;
+    if (file_path == NULL || *file_path == 0) return;
+
+    build_meta_path(file_path, meta_path, INPUT_MAX);
+    if (meta_path[0] == 0) return;
+
+    status = uefi_call_wrapper(root->Open, 5, root, &meta, meta_path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) return;
+
+    status = uefi_call_wrapper(meta->GetInfo, 4, meta, &GenericFileInfo, &info_size, info);
+    if (EFI_ERROR(status) || info->FileSize == 0 || info->FileSize > 4096) {
+        uefi_call_wrapper(meta->Close, 1, meta);
+        return;
+    }
+
+    status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData, (UINTN)info->FileSize + 1, (VOID **)&buf);
+    if (EFI_ERROR(status) || buf == NULL) {
+        uefi_call_wrapper(meta->Close, 1, meta);
+        return;
+    }
+
+    read_size = (UINTN)info->FileSize;
+    status = uefi_call_wrapper(meta->Read, 3, meta, &read_size, buf);
+    if (!EFI_ERROR(status) && read_size > 0) {
+        buf[read_size] = 0;
+        for (i = 0; i <= read_size; i++) {
+            if (buf[i] == '\n' || buf[i] == 0) {
+                CHAR8 saved = buf[i];
+                buf[i] = 0;
+                parse_meta_type_line(&buf[line_start], type_out, type_len);
+                buf[i] = saved;
+                line_start = i + 1;
+            }
+        }
+    }
+
+    uefi_call_wrapper(BS->FreePool, 1, buf);
+    uefi_call_wrapper(meta->Close, 1, meta);
+}
+
+static BOOLEAN mode_from_type_meta(CHAR8 *type_meta, view_mode_t *mode_out) {
+    CHAR8 norm[64];
+    normalize_meta_type(type_meta, norm, sizeof(norm));
+    if (norm[0] == 0) return FALSE;
+
+    if (ascii_eq_ci(norm, "TXT") || ascii_eq_ci(norm, "TEXT")) {
+        *mode_out = VIEW_TEXT;
+        return TRUE;
+    }
+    if (ascii_eq_ci(norm, "JPG") || ascii_eq_ci(norm, "JPEG")) {
+        *mode_out = VIEW_IMAGE;
+        return TRUE;
+    }
+    if (ascii_eq_ci(norm, "BMP") || ascii_eq_ci(norm, "BITMAP")) {
+        *mode_out = VIEW_IMAGE;
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static page_action_t wait_for_page_action(EFI_SYSTEM_TABLE *SystemTable) {
     EFI_INPUT_KEY key;
     UINTN event_index;
@@ -497,6 +673,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     UINT8 *file_data = NULL;
     UINTN file_size = 0;
     view_mode_t mode;
+    CHAR8 type_meta[64];
 
     InitializeLib(ImageHandle, SystemTable);
     disable_uefi_watchdog(SystemTable);
@@ -535,7 +712,16 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                ends_with_icase(path, L".gif")) {
         mode = VIEW_IMAGE;
     } else {
-        mode = VIEW_HEX;
+        status = open_root(ImageHandle, SystemTable, &root);
+        if (!EFI_ERROR(status)) {
+            load_meta_type_for_file(root, path, type_meta, sizeof(type_meta));
+            uefi_call_wrapper(root->Close, 1, root);
+        } else {
+            type_meta[0] = 0;
+        }
+        if (!mode_from_type_meta(type_meta, &mode)) {
+            mode = VIEW_HEX;
+        }
     }
 
     if (mode == VIEW_TEXT) {

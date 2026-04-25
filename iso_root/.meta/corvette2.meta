@@ -1,0 +1,5 @@
+NAME: corvette.jpg
+TYPE: JPEG
+DESC: JPEG of 1957 Corvette
+USAGE: Open corvette.jpg with VIEW.EFI
+HANDLER: view.efi

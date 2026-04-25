@@ -25,42 +25,50 @@ BOOT_PATH := $(ISO_ROOT)/$(TARGET)
 BUILD_DIR := build
 INTERMED  := $(BUILD_DIR)/boot.so
 OBJECTS   := $(BUILD_DIR)/boot.o
-PI_TARGET := pi.efi
+PI_TARGET := pi
 PI_PATH := $(ISO_ROOT)/$(PI_TARGET)
 PI_INTERMED := $(BUILD_DIR)/pi.so
 PI_OBJECTS := $(BUILD_DIR)/pi.o
-GFX_TARGET := gfxtest.efi
+GFX_TARGET := gfxtest
 GFX_PATH := $(ISO_ROOT)/$(GFX_TARGET)
 GFX_INTERMED := $(BUILD_DIR)/gfxtest.so
 GFX_OBJECTS := $(BUILD_DIR)/gfxtest.o
-CLOCK_TARGET := clockx64.efi
+CLOCK_TARGET := clockx64
 CLOCK_PATH := $(ISO_ROOT)/$(CLOCK_TARGET)
 CLOCK_INTERMED := $(BUILD_DIR)/clock.so
 CLOCK_OBJECTS := $(BUILD_DIR)/clock.o
-EDIT_TARGET := edit.efi
+EDIT_TARGET := edit
 EDIT_PATH := $(ISO_ROOT)/$(EDIT_TARGET)
 EDIT_INTERMED := $(BUILD_DIR)/edit.so
 EDIT_OBJECTS := $(BUILD_DIR)/edit.o
-GFXCLOCK_TARGET := gfxclock.efi
+GFXCLOCK_TARGET := gfxclock
 GFXCLOCK_PATH := $(ISO_ROOT)/$(GFXCLOCK_TARGET)
 GFXCLOCK_INTERMED := $(BUILD_DIR)/gfxclock.so
 GFXCLOCK_OBJECTS := $(BUILD_DIR)/gfxclock.o
-SUNMAP_TARGET := sunmap.efi
+SUNMAP_TARGET := sunmap
 SUNMAP_PATH := $(ISO_ROOT)/$(SUNMAP_TARGET)
 SUNMAP_INTERMED := $(BUILD_DIR)/sunmap.so
 SUNMAP_OBJECTS := $(BUILD_DIR)/sunmap.o
-GOPQUERY_TARGET := gopquery.efi
+GOPQUERY_TARGET := gopquery
 GOPQUERY_PATH := $(ISO_ROOT)/$(GOPQUERY_TARGET)
 GOPQUERY_INTERMED := $(BUILD_DIR)/gopquery.so
 GOPQUERY_OBJECTS := $(BUILD_DIR)/gopquery.o
-VIEW_TARGET := view.efi
+VIEW_TARGET := view
 VIEW_PATH := $(ISO_ROOT)/$(VIEW_TARGET)
 VIEW_INTERMED := $(BUILD_DIR)/view.so
 VIEW_OBJECTS := $(BUILD_DIR)/view.o
-META_TARGET := meta.efi
+META_TARGET := meta
 META_PATH := $(ISO_ROOT)/$(META_TARGET)
 META_INTERMED := $(BUILD_DIR)/meta.so
 META_OBJECTS := $(BUILD_DIR)/meta.o
+AUX_EFI_PATHS := $(PI_PATH) $(GFX_PATH) $(CLOCK_PATH) $(EDIT_PATH) $(GFXCLOCK_PATH) $(SUNMAP_PATH) $(GOPQUERY_PATH) $(VIEW_PATH) $(META_PATH)
+AUX_META_PATHS := $(foreach p,$(AUX_EFI_PATHS),$(ISO_ROOT)/.meta/$(notdir $(basename $(p))).meta)
+
+define install_program_meta
+	mkdir -p $(ISO_ROOT)/.meta
+	@test -f $(ISO_ROOT)/.meta/$(notdir $(basename $1)).meta || \
+		printf "TYPE: Program\n" > $(ISO_ROOT)/.meta/$(notdir $(basename $1)).meta
+endef
 
 all: check $(BOOT_PATH) $(PI_PATH) $(GFX_PATH) $(CLOCK_PATH) $(EDIT_PATH) $(GFXCLOCK_PATH) $(SUNMAP_PATH) $(GOPQUERY_PATH) $(VIEW_PATH) $(META_PATH)
 
@@ -118,29 +126,30 @@ clean:
 	      $(GFXCLOCK_PATH) $(SUNMAP_PATH) \
 	      $(GOPQUERY_PATH) $(VIEW_PATH) \
 	      $(META_PATH) \
+	      $(AUX_META_PATHS) \
 	      $(ISO_ROOT)/EFI/BOOT/$(TARGET)
 
 run-info:
 	@echo "Copy $(TARGET) to:"
 	@echo "  EFI/BOOT/bootx64.efi"
 	@echo "Optional PI tool:"
-	@echo "  EFI/BOOT/pi.efi"
+	@echo "  EFI/BOOT/pi"
 	@echo "Optional graphics tool:"
-	@echo "  EFI/BOOT/gfxtest.efi"
+	@echo "  EFI/BOOT/gfxtest"
 	@echo "Optional clock tool:"
-	@echo "  EFI/BOOT/clockx64.efi"
+	@echo "  EFI/BOOT/clockx64"
 	@echo "Optional text editor:"
-	@echo "  EFI/BOOT/edit.efi"
+	@echo "  EFI/BOOT/edit"
 	@echo "Optional full-screen graphics clock:"
-	@echo "  EFI/BOOT/gfxclock.efi"
+	@echo "  EFI/BOOT/gfxclock"
 	@echo "Optional world illumination map demo:"
-	@echo "  EFI/BOOT/sunmap.efi"
+	@echo "  EFI/BOOT/sunmap"
 	@echo "Optional GOP query tool:"
-	@echo "  EFI/BOOT/gopquery.efi"
+	@echo "  EFI/BOOT/gopquery"
 	@echo "Optional universal viewer:"
-	@echo "  EFI/BOOT/view.efi"
+	@echo "  EFI/BOOT/view"
 	@echo "Optional metadata editor:"
-	@echo "  EFI/BOOT/meta.efi"
+	@echo "  EFI/BOOT/meta"
 
 $(BUILD_DIR)/pi.o: pi.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -153,6 +162,7 @@ $(PI_PATH): $(PI_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 $(BUILD_DIR)/gfxtest.o: gfxtest.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -165,6 +175,7 @@ $(GFX_PATH): $(GFX_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 $(BUILD_DIR)/clock.o: clock.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -177,6 +188,7 @@ $(CLOCK_PATH): $(CLOCK_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 
 $(BUILD_DIR)/edit.o: edit.c | $(BUILD_DIR)
@@ -190,6 +202,7 @@ $(EDIT_PATH): $(EDIT_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 $(BUILD_DIR)/gfxclock.o: gfxclock.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -202,6 +215,7 @@ $(GFXCLOCK_PATH): $(GFXCLOCK_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 $(BUILD_DIR)/sunmap.o: sunmap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -214,6 +228,7 @@ $(SUNMAP_PATH): $(SUNMAP_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 $(BUILD_DIR)/gopquery.o: gopquery.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -226,6 +241,7 @@ $(GOPQUERY_PATH): $(GOPQUERY_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 .PHONY: all clean check run-info \
 	$(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(EDIT_TARGET) \
@@ -243,6 +259,7 @@ $(VIEW_PATH): $(VIEW_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 
 $(BUILD_DIR)/meta.o: meta.c | $(BUILD_DIR)
@@ -256,3 +273,4 @@ $(META_PATH): $(META_INTERMED) | $(ISO_ROOT)
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)

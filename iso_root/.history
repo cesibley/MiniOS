@@ -52,3 +52,91 @@ view corvette.jpg
 dir
 clear
 help
+list
+corvette.bmp
+corvette1
+list
+meta gettysburg
+gettysburg
+list
+delete sunmap.efi
+sunmap
+list
+sample.txt
+meta sample.txt
+list
+delete pi
+rename pi.efi pi
+pi
+list
+meta gettysburg.txt
+ren gettysburg.txt gettysburg
+rename gettysburg.txt gettysburg
+getysburg
+gettysburg
+list
+delete gettysburg.txt
+gettysburg
+list
+sample.txt
+meta sample.txt
+meta -a sample.txt handler=read
+sample.txt
+meta -a sample.txt handler=edit.efi
+sample.txt
+meta -a sample.txt handler=edit.efi -x
+sample.txt
+meta -a sample.txt handler=edit.efi -h
+sample.txt
+meta -a sample.txt handler=view.efi -h
+sample.txt
+list
+rename sunmap.efi sunmap
+delete sunmap.efi
+sunmap
+dir
+list -m
+delete gettysburg.txt
+gettysburg
+list
+list -desc
+list -type
+list -handler
+list -type -handler
+list -type
+list -type -desc
+list type -desc
+list -desc
+list -type -desc
+list
+list -type
+list -type -desc
+list -usage
+list -type -desc
+list -type -desc -usage
+list
+deleta *.efi
+delete *.efi
+list
+delete *.efi
+list
+list -type
+delete *.efi
+list
+list -type
+view
+gettysburg
+meta -a gettysburg handler=view
+list -type
+meta -a sample type=Text
+meta
+meta -a sample type=Text
+list
+list -type
+read test
+delete test
+write test
+write test This is a Test....
+list -type
+test
+list -type
