@@ -150,3 +150,23 @@ meta -a pi "desc=Calculate PI to a specified number of digits
 list -type -desc
 list
 list -desc
+list -type -desc
+edit .meta/gfxtest.meta
+list
+edit .meta/gfxtest.meta
+list -type -desc
+meta
+list -desc
+meta -a view "desc=Multi-format file Viewer
+list -type -desc
+meta -a clockx64 "desc=Display Current time and Clock Capabilities
+list -type -desc
+meta -a edit  "desc=Full Screen Text Editor
+list -type -desc
+meta -a gfxclock  "desc=Full-screen Graphical Clock
+list -type -desc
+meta -a pi  "Calculate PI to Specified DEcimal Places
+meta -a pi  "desc=Calculate PI to Specified DEcimal Places
+list -type -desc
+NvVars
+git add .
