@@ -170,3 +170,27 @@ meta -a pi  "desc=Calculate PI to Specified DEcimal Places
 list -type -desc
 NvVars
 git add .
+list
+corvette1
+sunmap
+list
+list -type -desc
+pi
+list
+junk
+sample
+list -type -helper
+gettysburg
+list -type -helper
+sample
+meta
+meta gettysburg
+list -type -handler
+corvette1
+meta -a corvette1 handler=view 
+meta -a corvette2 handler=view 
+corvette1
+list
+view -h corvette1
+list -handler
+list -type -handler

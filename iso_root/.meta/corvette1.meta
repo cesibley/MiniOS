@@ -3,4 +3,4 @@ TYPE: Bitmap
 DESC: Bitmap of 1957 Corvette
 USAGE: Open corvette.bmp with VIEW.EFI
 HELPER: view.efi
-HANDLER: view.efi
+HANDLER: view
