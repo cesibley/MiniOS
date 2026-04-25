@@ -140,3 +140,13 @@ write test This is a Test....
 list -type
 test
 list -type
+list
+meta -a gettysburg type=txt
+list -type -desc
+meta -a gettysburg type=Text
+meta -a pi desc=Calculate PI to a specified number of digits
+list -type -desc
+meta -a pi "desc=Calculate PI to a specified number of digits
+list -type -desc
+list
+list -desc

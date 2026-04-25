@@ -62,7 +62,6 @@ META_PATH := $(ISO_ROOT)/$(META_TARGET)
 META_INTERMED := $(BUILD_DIR)/meta.so
 META_OBJECTS := $(BUILD_DIR)/meta.o
 AUX_EFI_PATHS := $(PI_PATH) $(GFX_PATH) $(CLOCK_PATH) $(EDIT_PATH) $(GFXCLOCK_PATH) $(SUNMAP_PATH) $(GOPQUERY_PATH) $(VIEW_PATH) $(META_PATH)
-AUX_META_PATHS := $(foreach p,$(AUX_EFI_PATHS),$(ISO_ROOT)/.meta/$(notdir $(basename $(p))).meta)
 
 define install_program_meta
 	mkdir -p $(ISO_ROOT)/.meta
@@ -126,7 +125,6 @@ clean:
 	      $(GFXCLOCK_PATH) $(SUNMAP_PATH) \
 	      $(GOPQUERY_PATH) $(VIEW_PATH) \
 	      $(META_PATH) \
-	      $(AUX_META_PATHS) \
 	      $(ISO_ROOT)/EFI/BOOT/$(TARGET)
 
 run-info:
