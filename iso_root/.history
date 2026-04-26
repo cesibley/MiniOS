@@ -194,3 +194,37 @@ list
 view -h corvette1
 list -handler
 list -type -handler
+list -type -desc
+read junk
+delete junk
+list
+list -type -desc
+lit
+list
+sunmap
+sdfsdf
+help
+list -type -desc
+goto efi
+list
+goto boot
+list
+meta bootx64.efi
+meta -a bootx64.efi "desc=MiniOS Shell
+pi
+cd ..
+pi
+list
+goto ..
+pi
+sunmap
+gfxclock
+free
+list
+corvette1
+list -type
+edit 
+list
+edit pi
+view
+view -h NvVars
