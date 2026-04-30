@@ -228,3 +228,11 @@ list
 edit pi
 view
 view -h NvVars
+list
+list -type
+view corvette2
+free
+help
+make -f junk
+list -type junk
+list

@@ -1,2 +1,10 @@
-qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -drive file=fat:rw:iso_root,format=raw
-
+qemu-system-x86_64 \
+  -machine q35 \
+  -bios /usr/share/ovmf/OVMF.fd \
+  -drive file=fat:rw:iso_root,format=raw \
+  -display gtk,grab-on-hover=on \
+  -device qemu-xhci,id=xhci \
+  -device usb-tablet,bus=xhci.0 \
+  -device usb-mouse,bus=xhci.0 \
+  -device virtio-mouse-pci \
+  -device virtio-tablet-pci

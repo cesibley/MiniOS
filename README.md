@@ -42,6 +42,7 @@ The current build also produces standalone UEFI demo programs:
 - `GOPQUERY.EFI` — GOP capability query tool with per-mode inspection and optional mode switching
 - `EDIT.EFI` — full-screen text-mode editor for plain text files
 - `VIEW.EFI` — extension-aware universal viewer (`.txt` text, `.jpg/.jpeg/.png/.bmp/.gif` image decode via stb_image, otherwise hex)
+- `MOUSE.EFI` — graphical GOP mouse test with an on-screen pointer driven by UEFI Simple/Absolute Pointer events
 
 ## Latest project configuration
 
@@ -54,7 +55,16 @@ The repo is currently configured to:
 `StartMiniOS` currently runs:
 
 ```bash
-qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -drive file=fat:rw:iso_root,format=raw
+qemu-system-x86_64 \
+  -machine q35 \
+  -bios /usr/share/ovmf/OVMF.fd \
+  -drive file=fat:rw:iso_root,format=raw \
+  -display gtk,grab-on-hover=on \
+  -device qemu-xhci,id=xhci \
+  -device usb-tablet,bus=xhci.0 \
+  -device usb-mouse,bus=xhci.0 \
+  -device virtio-mouse-pci \
+  -device virtio-tablet-pci
 ```
 
 So QEMU mounts `iso_root` as a writable FAT drive and OVMF loads the UEFI programs from there.
@@ -85,6 +95,7 @@ This runs `check` first (verifies `gnu-efi` linker script/libraries/headers) and
 - `GOPQUERY.EFI`
 - `EDIT.EFI`
 - `VIEW.EFI`
+- `MOUSE.EFI`
 
 All EFI binaries are built directly into `iso_root/`, so they are immediately runnable in the QEMU FAT drive layout without extra copy steps.
 
@@ -107,6 +118,7 @@ run GOPQUERY.EFI
 run EDIT.EFI filename.txt
 run VIEW.EFI file.txt
 run VIEW.EFI -h file.bin
+run MOUSE.EFI
 EDIT filename.txt
 ```
 
@@ -150,6 +162,7 @@ run GOPQUERY.EFI
 run GFXTEST.EFI
 run GFXCLOCK.EFI
 run SUNMAP.EFI
+run MOUSE.EFI
 ```
 
 ## Build only one app
@@ -165,3 +178,5 @@ make PI.EFI
 - Missing `elf_x86_64_efi.lds`, `crt0-efi-x86_64.o`, `libefi.a`, or `libgnuefi.a` means `gnu-efi` is not fully installed.
 - If QEMU cannot find `/usr/share/ovmf/OVMF.fd`, install the `ovmf` package (or update `StartMiniOS` to your local firmware path).
 - If UEFI does not auto-run your target, launch it manually from the shell with `run <APP>.EFI`.
+- If `MOUSE.EFI` shows no movement/clicks in QEMU, use a graphical display backend and attach both USB + virtio pointer devices (for example `-display gtk,grab-on-hover=on -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0 -device usb-mouse,bus=xhci.0 -device virtio-mouse-pci -device virtio-tablet-pci`), then click inside the VM window once to ensure pointer focus.
+- If `MOUSE.EFI` works on native hardware but still shows no events in QEMU, treat this as a VM firmware/input-stack limitation (common with some OVMF + display backend combinations).
