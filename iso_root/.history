@@ -236,3 +236,16 @@ help
 make -f junk
 list -type junk
 list
+launcher
+exit
+launcher
+list
+gfxtest s 0
+gfxtest set 0
+list
+gopquery
+gopquerys 10
+gopquery s 10
+gopquery
+gopquery set 14
+launcher

@@ -65,6 +65,10 @@ MOUSE_TARGET := mouse
 MOUSE_PATH := $(ISO_ROOT)/$(MOUSE_TARGET)
 MOUSE_INTERMED := $(BUILD_DIR)/mouse.so
 MOUSE_OBJECTS := $(BUILD_DIR)/mouse.o
+LAUNCHER_TARGET := launcher
+LAUNCHER_PATH := $(ISO_ROOT)/$(LAUNCHER_TARGET)
+LAUNCHER_INTERMED := $(BUILD_DIR)/launcher.so
+LAUNCHER_OBJECTS := $(BUILD_DIR)/launcher.o
 AUX_EFI_PATHS := $(PI_PATH) $(GFX_PATH) $(CLOCK_PATH) $(EDIT_PATH) $(GFXCLOCK_PATH) $(SUNMAP_PATH) $(GOPQUERY_PATH) $(VIEW_PATH) $(META_PATH) $(MOUSE_PATH)
 
 define install_program_meta
@@ -73,7 +77,7 @@ define install_program_meta
 		printf "TYPE: Program\n" > $(ISO_ROOT)/.meta/$(notdir $(basename $1)).meta
 endef
 
-all: check $(BOOT_PATH) $(PI_PATH) $(GFX_PATH) $(CLOCK_PATH) $(EDIT_PATH) $(GFXCLOCK_PATH) $(SUNMAP_PATH) $(GOPQUERY_PATH) $(VIEW_PATH) $(META_PATH) $(MOUSE_PATH)
+all: check $(BOOT_PATH) $(PI_PATH) $(GFX_PATH) $(CLOCK_PATH) $(EDIT_PATH) $(GFXCLOCK_PATH) $(SUNMAP_PATH) $(GOPQUERY_PATH) $(VIEW_PATH) $(META_PATH) $(MOUSE_PATH) $(LAUNCHER_PATH)
 
 $(TARGET): $(BOOT_PATH)
 $(PI_TARGET): $(PI_PATH)
@@ -86,6 +90,7 @@ $(GOPQUERY_TARGET): $(GOPQUERY_PATH)
 $(VIEW_TARGET): $(VIEW_PATH)
 $(META_TARGET): $(META_PATH)
 $(MOUSE_TARGET): $(MOUSE_PATH)
+$(LAUNCHER_TARGET): $(LAUNCHER_PATH)
 
 check:
 	@test -n "$(EFILDS)" || (echo "Missing elf_$(ARCH)_efi.lds. Install gnu-efi."; exit 1)
@@ -130,7 +135,7 @@ clean:
 	      $(CLOCK_PATH) $(EDIT_PATH) \
 	      $(GFXCLOCK_PATH) $(SUNMAP_PATH) \
 	      $(GOPQUERY_PATH) $(VIEW_PATH) \
-	      $(META_PATH) $(MOUSE_PATH) \
+	      $(META_PATH) $(MOUSE_PATH) $(LAUNCHER_PATH) \
 	      $(ISO_ROOT)/EFI/BOOT/$(TARGET)
 
 run-info:
@@ -251,7 +256,20 @@ $(GOPQUERY_PATH): $(GOPQUERY_INTERMED) | $(ISO_ROOT)
 
 .PHONY: all clean check run-info \
 	$(TARGET) $(PI_TARGET) $(GFX_TARGET) $(CLOCK_TARGET) $(EDIT_TARGET) \
-	$(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(VIEW_TARGET) $(META_TARGET) $(MOUSE_TARGET)
+	$(GFXCLOCK_TARGET) $(SUNMAP_TARGET) $(GOPQUERY_TARGET) $(VIEW_TARGET) $(META_TARGET) $(MOUSE_TARGET) $(LAUNCHER_TARGET)
+
+$(BUILD_DIR)/launcher.o: launcher.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(LAUNCHER_INTERMED): $(LAUNCHER_OBJECTS)
+	$(LD) $(LDFLAGS) $(CRT0) $(LAUNCHER_OBJECTS) -o $@ $(LIBGNUEFI) $(LIBEFI)
+
+$(LAUNCHER_PATH): $(LAUNCHER_INTERMED) | $(ISO_ROOT)
+	$(OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		--target=efi-app-$(ARCH) $< $@
+	$(call install_program_meta,$@)
 
 
 $(BUILD_DIR)/view.o: view.c | $(BUILD_DIR)
