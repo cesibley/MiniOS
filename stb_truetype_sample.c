@@ -155,7 +155,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     stbtt_fontinfo font;
     float scale;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
-    const CHAR16 *font_path = L"\\Launcher Icons\\DejaVuSans.ttf";
+    const CHAR16 *font_path = L"\\.launcher\\DejaVuSans.ttf";
     const char *line1 = "ABC";
     const char *line2 = "abc";
 
