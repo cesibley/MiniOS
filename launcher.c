@@ -12,6 +12,23 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+static int tt_ifloor(double x){ int i=(int)x; return (x<(double)i)?(i-1):i; }
+static int tt_iceil(double x){ int i=(int)x; return (x>(double)i)?(i+1):i; }
+#define STBTT_ifloor(x) tt_ifloor((x))
+#define STBTT_iceil(x)  tt_iceil((x))
+#define STBTT_sqrt(x)   (x)
+#define STBTT_pow(x,y)  (x)
+#define STBTT_fmod(x,y) (0.0)
+#define STBTT_cos(x)    (1.0)
+#define STBTT_acos(x)   (0.0)
+#define STBTT_fabs(x)   (((x) < 0) ? -(x) : (x))
+#define STBTT_malloc(sz, u) AllocatePool((UINTN)(sz))
+#define STBTT_free(p, u) FreePool((p))
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+
+typedef struct { BOOLEAN ok; UINT8 *data; UINTN size; stbtt_fontinfo font; float scale; int ascent; int descent; int line_gap; } TT_FONT;
+
 #define MAX_ITEMS 256
 #define LAUNCHER_NAME_MAX 128
 #define META_BUF 1024
@@ -63,77 +80,70 @@ static VOID draw_label_fixed(EFI_SYSTEM_TABLE *st, CHAR16 *name, UINTN text_col,
     uefi_call_wrapper(st->ConOut->SetCursorPosition, 3, st->ConOut, text_col, text_row);
     uefi_call_wrapper(st->ConOut->OutputString, 2, st->ConOut, tmp);
 }
-static UINT8 glyph3x5(CHAR16 ch, UINTN row){
-    if (ch >= L'a' && ch <= L'z') ch = (CHAR16)(ch - 32);
-    switch (ch) {
-        case L'A': { static const UINT8 g[5]={2,5,7,5,5}; return g[row]; }
-        case L'B': { static const UINT8 g[5]={6,5,6,5,6}; return g[row]; }
-        case L'C': { static const UINT8 g[5]={3,4,4,4,3}; return g[row]; }
-        case L'D': { static const UINT8 g[5]={6,5,5,5,6}; return g[row]; }
-        case L'E': { static const UINT8 g[5]={7,4,6,4,7}; return g[row]; }
-        case L'F': { static const UINT8 g[5]={7,4,6,4,4}; return g[row]; }
-        case L'G': { static const UINT8 g[5]={3,4,5,5,3}; return g[row]; }
-        case L'H': { static const UINT8 g[5]={5,5,7,5,5}; return g[row]; }
-        case L'I': { static const UINT8 g[5]={7,2,2,2,7}; return g[row]; }
-        case L'J': { static const UINT8 g[5]={1,1,1,5,2}; return g[row]; }
-        case L'K': { static const UINT8 g[5]={5,5,6,5,5}; return g[row]; }
-        case L'L': { static const UINT8 g[5]={4,4,4,4,7}; return g[row]; }
-        case L'M': { static const UINT8 g[5]={5,7,7,5,5}; return g[row]; }
-        case L'N': { static const UINT8 g[5]={5,7,7,7,5}; return g[row]; }
-        case L'O': { static const UINT8 g[5]={2,5,5,5,2}; return g[row]; }
-        case L'P': { static const UINT8 g[5]={6,5,6,4,4}; return g[row]; }
-        case L'Q': { static const UINT8 g[5]={2,5,5,3,1}; return g[row]; }
-        case L'R': { static const UINT8 g[5]={6,5,6,5,5}; return g[row]; }
-        case L'S': { static const UINT8 g[5]={3,4,2,1,6}; return g[row]; }
-        case L'T': { static const UINT8 g[5]={7,2,2,2,2}; return g[row]; }
-        case L'U': { static const UINT8 g[5]={5,5,5,5,7}; return g[row]; }
-        case L'V': { static const UINT8 g[5]={5,5,5,5,2}; return g[row]; }
-        case L'W': { static const UINT8 g[5]={5,5,7,7,5}; return g[row]; }
-        case L'X': { static const UINT8 g[5]={5,5,2,5,5}; return g[row]; }
-        case L'Y': { static const UINT8 g[5]={5,5,2,2,2}; return g[row]; }
-        case L'Z': { static const UINT8 g[5]={7,1,2,4,7}; return g[row]; }
-        case L'0': { static const UINT8 g[5]={7,5,5,5,7}; return g[row]; }
-        case L'1': { static const UINT8 g[5]={2,6,2,2,7}; return g[row]; }
-        case L'2': { static const UINT8 g[5]={6,1,7,4,7}; return g[row]; }
-        case L'3': { static const UINT8 g[5]={6,1,7,1,6}; return g[row]; }
-        case L'4': { static const UINT8 g[5]={5,5,7,1,1}; return g[row]; }
-        case L'5': { static const UINT8 g[5]={7,4,7,1,6}; return g[row]; }
-        case L'6': { static const UINT8 g[5]={3,4,7,5,2}; return g[row]; }
-        case L'7': { static const UINT8 g[5]={7,1,1,2,2}; return g[row]; }
-        case L'8': { static const UINT8 g[5]={2,5,2,5,2}; return g[row]; }
-        case L'9': { static const UINT8 g[5]={2,5,7,1,6}; return g[row]; }
-        case L'.': { static const UINT8 g[5]={0,0,0,0,2}; return g[row]; }
-        case L'-': { static const UINT8 g[5]={0,0,7,0,0}; return g[row]; }
-        case L'_': { static const UINT8 g[5]={0,0,0,0,7}; return g[row]; }
-        default: return 0;
-    }
+static EFI_STATUS read_file_alloc(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CONST CHAR16 *path, UINT8 **data_out, UINTN *size_out){
+    EFI_FILE_HANDLE root,f; EFI_FILE_INFO *fi=NULL; UINTN info_sz=0,read_sz; EFI_STATUS s; UINT8 *buf=NULL;
+    *data_out=NULL; *size_out=0;
+    s=open_root(ih,st,&root); if(EFI_ERROR(s)) return s;
+    s=uefi_call_wrapper(root->Open,5,root,&f,(CHAR16*)path,EFI_FILE_MODE_READ,0); if(EFI_ERROR(s)){ uefi_call_wrapper(root->Close,1,root); return s; }
+    s=uefi_call_wrapper(f->GetInfo,4,f,&GenericFileInfo,&info_sz,NULL);
+    if(s==EFI_BUFFER_TOO_SMALL){ s=uefi_call_wrapper(st->BootServices->AllocatePool,3,EfiLoaderData,info_sz,(VOID**)&fi); if(!EFI_ERROR(s)) s=uefi_call_wrapper(f->GetInfo,4,f,&GenericFileInfo,&info_sz,fi); }
+    if(EFI_ERROR(s)||fi==NULL){ uefi_call_wrapper(f->Close,1,f); uefi_call_wrapper(root->Close,1,root); return EFI_LOAD_ERROR; }
+    s=uefi_call_wrapper(st->BootServices->AllocatePool,3,EfiLoaderData,(UINTN)fi->FileSize,(VOID**)&buf);
+    if(EFI_ERROR(s)||buf==NULL){ uefi_call_wrapper(st->BootServices->FreePool,1,fi); uefi_call_wrapper(f->Close,1,f); uefi_call_wrapper(root->Close,1,root); return EFI_OUT_OF_RESOURCES; }
+    read_sz=(UINTN)fi->FileSize; s=uefi_call_wrapper(f->Read,3,f,&read_sz,buf);
+    uefi_call_wrapper(st->BootServices->FreePool,1,fi); uefi_call_wrapper(f->Close,1,f); uefi_call_wrapper(root->Close,1,root);
+    if(EFI_ERROR(s)||read_sz==0){ uefi_call_wrapper(st->BootServices->FreePool,1,buf); return EFI_LOAD_ERROR; }
+    *data_out=buf; *size_out=read_sz; return EFI_SUCCESS;
 }
-static VOID draw_label_centered_under_icon(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, CHAR16 *name, UINTN icon_x, UINTN icon_y){
-    CHAR16 tmp[LAUNCHER_NAME_MAX];
-    UINTN i=0,n=0,max_chars=10,x,y,row,col;
-    UINTN scale = 2;
-    while(name[i]!=0 && i+1<LAUNCHER_NAME_MAX){ tmp[i]=name[i]; i++; }
-    tmp[i]=0; n=i;
-    if(n>max_chars){ tmp[max_chars-3]=L'.'; tmp[max_chars-2]=L'.'; tmp[max_chars-1]=L'.'; tmp[max_chars]=0; n=max_chars; }
-    x = icon_x + ((ICON_PX > n*(3*scale + 1)) ? ((ICON_PX - n*(3*scale + 1))/2) : 0);
-    y = icon_y + ICON_PX + 4;
+
+static VOID load_tt_font(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, TT_FONT *tt){
+    EFI_STATUS s; int off;
+    tt->ok=FALSE; tt->data=NULL; tt->size=0; tt->scale=0.0f; tt->ascent=0; tt->descent=0; tt->line_gap=0;
+    s=read_file_alloc(ih,st,L"\\Launcher Icons\\DejaVuSans.ttf",&tt->data,&tt->size); if(EFI_ERROR(s)||tt->data==NULL) return;
+    off=stbtt_GetFontOffsetForIndex(tt->data,0); if(off<0 || !stbtt_InitFont(&tt->font,tt->data,off)) return;
+    tt->scale=stbtt_ScaleForPixelHeight(&tt->font,12.0f);
+    stbtt_GetFontVMetrics(&tt->font,&tt->ascent,&tt->descent,&tt->line_gap);
+    tt->ok=TRUE;
+}
+
+static VOID draw_label_centered_under_icon(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *name, UINTN icon_x, UINTN icon_y){
+    CHAR8 txt[LAUNCHER_NAME_MAX]; UINTN i=0,n=0,max_chars=10; int x,y,baseline,pen_x;
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *bg; UINTN bw,bh;
+    if(tt==NULL || !tt->ok) return;
+    while(name[i]!=0 && i+1<LAUNCHER_NAME_MAX){ CHAR16 ch=name[i]; txt[i]=(ch<128)?(CHAR8)ch:'?'; i++; } txt[i]=0; n=i;
+    if(n>max_chars){ txt[max_chars-3]='.'; txt[max_chars-2]='.'; txt[max_chars-1]='.'; txt[max_chars]=0; n=max_chars; }
+    bw=(UINTN)(n*8+4); bh=16;
+    x=(int)(icon_x + ((ICON_PX > bw) ? ((ICON_PX - bw)/2) : 0));
+    y=(int)(icon_y + ICON_PX + 4);
+    if(x<0||y<0) return;
+    bg=AllocatePool(bw*bh*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)); if(bg==NULL) return;
+    uefi_call_wrapper(g->Blt,10,g,bg,EfiBltVideoToBltBuffer,(UINTN)x,(UINTN)y,0,0,bw,bh,0);
+    baseline=y + (int)(tt->ascent * tt->scale);
+    pen_x=x+1;
     for(i=0;i<n;i++){
-        for(row=0;row<5;row++){
-            UINT8 bits = glyph3x5(tmp[i], row);
-            for(col=0;col<3;col++){
-                if(bits & (1U << (2-col))){
-                    EFI_GRAPHICS_OUTPUT_BLT_PIXEL black={0,0,0,0};
-                    EFI_GRAPHICS_OUTPUT_BLT_PIXEL aa={80,80,80,0};
-                    fill(g, x + i*(3*scale + 1) + col*scale, y + row*scale, scale, scale, black);
-                    if (scale > 1) {
-                        fill(g, x + i*(3*scale + 1) + col*scale + scale - 1, y + row*scale, 1, scale, aa);
-                        fill(g, x + i*(3*scale + 1) + col*scale, y + row*scale + scale - 1, scale, 1, aa);
+        int cp=(unsigned char)txt[i],gw,gh,xoff,yoff,adv=0,lsb=0; unsigned char *bm; UINTN row,col;
+        bm=stbtt_GetCodepointBitmap(&tt->font,0,tt->scale,cp,&gw,&gh,&xoff,&yoff);
+        if(bm!=NULL){
+            int gx=pen_x+xoff, gy=baseline+yoff;
+            for(row=0;row<(UINTN)gh;row++) for(col=0;col<(UINTN)gw;col++){
+                UINTN dx=(UINTN)(gx+(int)col), dy=(UINTN)(gy+(int)row);
+                if(dx>=(UINTN)x && dx<(UINTN)x+bw && dy>=(UINTN)y && dy<(UINTN)y+bh){
+                    UINTN bi=(dy-(UINTN)y)*bw + (dx-(UINTN)x); UINT8 a=bm[row*(UINTN)gw+col];
+                    if(a){ UINT8 inv=(UINT8)(255-a);
+                        bg[bi].Red=(UINT8)((bg[bi].Red*inv)/255); bg[bi].Green=(UINT8)((bg[bi].Green*inv)/255); bg[bi].Blue=(UINT8)((bg[bi].Blue*inv)/255);
                     }
                 }
             }
+            stbtt_FreeBitmap(bm,NULL);
         }
+        stbtt_GetCodepointHMetrics(&tt->font,cp,&adv,&lsb); pen_x += (int)(adv*tt->scale);
+        if(i+1<n) pen_x += (int)(stbtt_GetCodepointKernAdvance(&tt->font,cp,(unsigned char)txt[i+1])*tt->scale);
+        (void)lsb;
     }
+    uefi_call_wrapper(g->Blt,10,g,bg,EfiBltBufferToVideo,0,0,(UINTN)x,(UINTN)y,bw,bh,0);
+    FreePool(bg);
 }
+
 static VOID blit_icon_alpha(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, ICON_IMAGE *icon, UINTN x, UINTN y, EFI_GRAPHICS_OUTPUT_BLT_PIXEL bg){
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL tmp[ICON_PX * ICON_PX];
     UINTN i, n;
@@ -192,12 +202,13 @@ static VOID load_icon(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *icon_name, IC
     uefi_call_wrapper(f->Close,1,f); uefi_call_wrapper(root->Close,1,root);
 }
 
- EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; EFI_GRAPHICS_OUTPUT_PROTOCOL *g=NULL; EFI_GUID gg=gEfiGraphicsOutputProtocolGuid; EFI_SIMPLE_POINTER_PROTOCOL *sp=NULL; EFI_GUID spg=EFI_SIMPLE_POINTER_PROTOCOL_GUID; EFI_ABSOLUTE_POINTER_PROTOCOL *ap=NULL; EFI_GUID apg=EFI_ABSOLUTE_POINTER_PROTOCOL_GUID; EFI_INPUT_KEY k; ITEM items[MAX_ITEMS]; ICON_IMAGE icons[MAX_ITEMS]; UINTN count,scroll=0,sel=(UINTN)-1,last_sel=(UINTN)-1,last_click_ms=0; UINTN cols=1,cell_w=90,cell_h=83,cell_pad_x=26; UINTN ww,wh,wx,wy,content_y,content_h,rows,visible_rows,max_scroll; BOOLEAN need_redraw=TRUE; INTN px=200,py=140,ppx=-1,ppy=-1; EFI_EVENT events[3]; UINTN evn=0,which=0; EFI_GRAPHICS_OUTPUT_BLT_PIXEL ptr_bg[12*14]; BOOLEAN ptr_bg_valid=FALSE; UINT64 last_abs_x=0,last_abs_y=0; UINT32 last_abs_buttons=0; BOOLEAN prev_left=FALSE;
+ EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; EFI_GRAPHICS_OUTPUT_PROTOCOL *g=NULL; EFI_GUID gg=gEfiGraphicsOutputProtocolGuid; EFI_SIMPLE_POINTER_PROTOCOL *sp=NULL; EFI_GUID spg=EFI_SIMPLE_POINTER_PROTOCOL_GUID; EFI_ABSOLUTE_POINTER_PROTOCOL *ap=NULL; EFI_GUID apg=EFI_ABSOLUTE_POINTER_PROTOCOL_GUID; EFI_INPUT_KEY k; ITEM items[MAX_ITEMS]; ICON_IMAGE icons[MAX_ITEMS]; TT_FONT ttfont; UINTN count,scroll=0,sel=(UINTN)-1,last_sel=(UINTN)-1,last_click_ms=0; UINTN cols=1,cell_w=90,cell_h=83,cell_pad_x=26; UINTN ww,wh,wx,wy,content_y,content_h,rows,visible_rows,max_scroll; BOOLEAN need_redraw=TRUE; INTN px=200,py=140,ppx=-1,ppy=-1; EFI_EVENT events[3]; UINTN evn=0,which=0; EFI_GRAPHICS_OUTPUT_BLT_PIXEL ptr_bg[12*14]; BOOLEAN ptr_bg_valid=FALSE; UINT64 last_abs_x=0,last_abs_y=0; UINT32 last_abs_buttons=0; BOOLEAN prev_left=FALSE;
  EFI_GRAPHICS_OUTPUT_BLT_PIXEL desk={70,110,40,0},win={192,192,192,0},title={140,90,60,0},ic={190,190,80,0},selc={255,220,40,0},ptr={0,0,255,0};
  InitializeLib(ih,st); disable_uefi_watchdog(st);
  s=uefi_call_wrapper(st->BootServices->LocateProtocol,3,&gg,NULL,(VOID**)&g); if(EFI_ERROR(s)) return s;
  uefi_call_wrapper(st->BootServices->LocateProtocol,3,&spg,NULL,(VOID**)&sp);
  uefi_call_wrapper(st->BootServices->LocateProtocol,3,&apg,NULL,(VOID**)&ap);
+ load_tt_font(ih,st,&ttfont);
  count=load_items(ih,st,items); { UINTN i; for(i=0;i<count;i++) load_icon(ih,st,items[i].icon,&icons[i]); }
  ww=(g->Mode->Info->HorizontalResolution*3)/4; wh=(g->Mode->Info->VerticalResolution*3)/4; wx=(g->Mode->Info->HorizontalResolution-ww)/2; wy=(g->Mode->Info->VerticalResolution-wh)/2; content_y=wy+36; content_h=wh-46; { UINTN usable_w=(ww>26)?(ww-26):ww; cols=usable_w/cell_w; if(cols<1) cols=1; } rows=(count+cols-1)/cols; visible_rows=content_h/cell_h; if(visible_rows<1) visible_rows=1; max_scroll=(rows>visible_rows)?(rows-visible_rows):0;
  events[evn++] = st->ConIn->WaitForKey;
@@ -206,7 +217,7 @@ static VOID load_icon(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *icon_name, IC
  while(1){ UINTN i,start,end; EFI_SIMPLE_POINTER_STATE ps; ZeroMem(&ps, sizeof(ps));
   if(need_redraw){ start=scroll*cols; end=start+visible_rows*cols; if(end>count) end=count;
    fill(g,0,0,g->Mode->Info->HorizontalResolution,g->Mode->Info->VerticalResolution,desk); fill(g,wx,wy,ww,wh,win); fill(g,wx,wy,ww,30,title); PrintAt((wx/8)+2,wy/16,L"Launcher Desktop");
-	   for(i=start;i<end;i++){ UINTN vi=i-start,row=vi/cols,col=vi%cols,x=wx+12+col*cell_w+cell_pad_x/2,y=content_y+row*cell_h; fill(g,x,y,ICON_PX,ICON_PX,win); if(i==sel){ fill(g,x-2,y-2,ICON_PX+4,2,selc); fill(g,x-2,y+ICON_PX,ICON_PX+4,2,selc); fill(g,x-2,y,2,ICON_PX,selc); fill(g,x+ICON_PX,y,2,ICON_PX,selc);} if(icons[i].ok){ blit_icon_alpha(g,&icons[i],x,y,win);} draw_label_centered_under_icon(g, items[i].name, x, y);} 
+	   for(i=start;i<end;i++){ UINTN vi=i-start,row=vi/cols,col=vi%cols,x=wx+12+col*cell_w+cell_pad_x/2,y=content_y+row*cell_h; fill(g,x,y,ICON_PX,ICON_PX,win); if(i==sel){ fill(g,x-2,y-2,ICON_PX+4,2,selc); fill(g,x-2,y+ICON_PX,ICON_PX+4,2,selc); fill(g,x-2,y,2,ICON_PX,selc); fill(g,x+ICON_PX,y,2,ICON_PX,selc);} if(icons[i].ok){ blit_icon_alpha(g,&icons[i],x,y,win);} draw_label_centered_under_icon(g, &ttfont, items[i].name, x, y);} 
    if(max_scroll>0){ UINTN barx=wx+ww-14,bh=content_h-4,th=(bh*visible_rows)/rows,ty=content_y+2+((bh-th)*scroll)/max_scroll; EFI_GRAPHICS_OUTPUT_BLT_PIXEL sb={120,120,120,0},thumb={50,50,50,0}; fill(g,barx,content_y+2,10,bh,sb); fill(g,barx,ty,10,th,thumb);} 
    need_redraw=FALSE;
   }
@@ -230,7 +241,7 @@ static VOID load_icon(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *icon_name, IC
 	    prev_left = ps.LeftButton ? TRUE : FALSE;
   }
  }
- { UINTN i; for(i=0;i<count;i++) if(icons[i].px) uefi_call_wrapper(st->BootServices->FreePool,1,icons[i].px); }
+ { UINTN i; for(i=0;i<count;i++) if(icons[i].px) uefi_call_wrapper(st->BootServices->FreePool,1,icons[i].px); if(ttfont.data) uefi_call_wrapper(st->BootServices->FreePool,1,ttfont.data); }
  return EFI_SUCCESS;
 }
 
