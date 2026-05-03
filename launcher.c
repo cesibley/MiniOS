@@ -18,12 +18,12 @@ static int tt_iceil(double x){ int i=(int)x; return (x>(double)i)?(i+1):i; }
 #define STBTT_iceil(x)  tt_iceil((x))
 #define STBTT_sqrt(x)   (x)
 #define STBTT_pow(x,y)  (x)
-#define STBTT_fmod(x,y) (0.0)
-#define STBTT_cos(x)    (1.0)
-#define STBTT_acos(x)   (0.0)
+#define STBTT_fmod(x,y) ((void)(x),(void)(y),0.0)
+#define STBTT_cos(x)    ((void)(x),1.0)
+#define STBTT_acos(x)   ((void)(x),0.0)
 #define STBTT_fabs(x)   (((x) < 0) ? -(x) : (x))
-#define STBTT_malloc(sz, u) AllocatePool((UINTN)(sz))
-#define STBTT_free(p, u) FreePool((p))
+#define STBTT_malloc(sz, u) ((void)(u), AllocatePool((UINTN)(sz)))
+#define STBTT_free(p, u) ((void)(u), FreePool((p)))
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
@@ -62,24 +62,6 @@ static VOID read_meta_type_handler(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *
 
 static BOOLEAN le16(UINT8 *p, UINT16 *v){ *v=(UINT16)(p[0]|(p[1]<<8)); return TRUE; }
 static BOOLEAN le32(UINT8 *p, UINT32 *v){ *v=(UINT32)(p[0]|(p[1]<<8)|(p[2]<<16)|(p[3]<<24)); return TRUE; }
-static VOID draw_label_fixed(EFI_SYSTEM_TABLE *st, CHAR16 *name, UINTN text_col, UINTN text_row, UINTN max_chars) {
-    CHAR16 tmp[LAUNCHER_NAME_MAX];
-    UINTN i = 0, n = 0;
-    if (max_chars < 3) max_chars = 3;
-    while (name[i] != 0 && i + 1 < LAUNCHER_NAME_MAX) { tmp[i] = name[i]; i++; }
-    tmp[i] = 0; n = i;
-    if (n > max_chars) {
-        if (max_chars > 3) {
-            tmp[max_chars - 3] = L'.';
-            tmp[max_chars - 2] = L'.';
-            tmp[max_chars - 1] = L'.';
-            tmp[max_chars] = 0;
-            n = max_chars;
-        }
-    }
-    uefi_call_wrapper(st->ConOut->SetCursorPosition, 3, st->ConOut, text_col, text_row);
-    uefi_call_wrapper(st->ConOut->OutputString, 2, st->ConOut, tmp);
-}
 static EFI_STATUS read_file_alloc(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CONST CHAR16 *path, UINT8 **data_out, UINTN *size_out){
     EFI_FILE_HANDLE root,f; EFI_FILE_INFO *fi=NULL; UINTN info_sz=0,read_sz; EFI_STATUS s; UINT8 *buf=NULL;
     *data_out=NULL; *size_out=0;
@@ -258,7 +240,7 @@ static VOID load_icon(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *icon_name, IC
 }
 
  EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; EFI_GRAPHICS_OUTPUT_PROTOCOL *g=NULL; EFI_GUID gg=gEfiGraphicsOutputProtocolGuid; EFI_SIMPLE_POINTER_PROTOCOL *sp=NULL; EFI_GUID spg=EFI_SIMPLE_POINTER_PROTOCOL_GUID; EFI_ABSOLUTE_POINTER_PROTOCOL *ap=NULL; EFI_GUID apg=EFI_ABSOLUTE_POINTER_PROTOCOL_GUID; EFI_INPUT_KEY k; ITEM items[MAX_ITEMS]; ICON_IMAGE icons[MAX_ITEMS]; TT_FONT ttfont; UINTN count,scroll=0,sel=(UINTN)-1,last_sel=(UINTN)-1,last_click_ms=0; UINTN cols=1,cell_w=90,cell_h=83,cell_pad_x=26; UINTN ww,wh,wx,wy,content_y,content_h,rows,visible_rows,max_scroll; BOOLEAN need_redraw=TRUE; INTN px=200,py=140,ppx=-1,ppy=-1; EFI_EVENT events[3]; UINTN evn=0,which=0; EFI_GRAPHICS_OUTPUT_BLT_PIXEL ptr_bg[12*14]; BOOLEAN ptr_bg_valid=FALSE; UINT64 last_abs_x=0,last_abs_y=0; UINT32 last_abs_buttons=0; BOOLEAN prev_left=FALSE;
- EFI_GRAPHICS_OUTPUT_BLT_PIXEL desk={70,110,40,0},win={192,192,192,0},title={140,90,60,0},ic={190,190,80,0},selc={255,220,40,0},ptr={0,0,255,0};
+ EFI_GRAPHICS_OUTPUT_BLT_PIXEL desk={70,110,40,0},win={192,192,192,0},title={140,90,60,0},selc={255,220,40,0},ptr={0,0,255,0};
  InitializeLib(ih,st); disable_uefi_watchdog(st);
  s=uefi_call_wrapper(st->BootServices->LocateProtocol,3,&gg,NULL,(VOID**)&g); if(EFI_ERROR(s)) return s;
  uefi_call_wrapper(st->BootServices->LocateProtocol,3,&spg,NULL,(VOID**)&sp);
