@@ -274,3 +274,6 @@ meta -a gettysburg handler=view
 ../meta -a gettysburg handler=view
 list
 list -type
+ttfdemo
+clear
+list
