@@ -259,3 +259,18 @@ list -type
 launcher
 clear
 launcher
+list
+list -type -handler
+meta -a sample handler=view
+meta -a sample type=Text
+sample
+launcher
+list
+help
+list
+goto data
+list
+meta -a gettysburg handler=view
+../meta -a gettysburg handler=view
+list
+list -type
