@@ -253,3 +253,8 @@ list
 ttfdemo
 clear
 ttfdemo
+launcher
+list
+list -type
+launcher
+clear

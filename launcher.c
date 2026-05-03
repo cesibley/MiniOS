@@ -101,25 +101,80 @@ static VOID load_tt_font(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, TT_FONT *tt){
     tt->ok=FALSE; tt->data=NULL; tt->size=0; tt->scale=0.0f; tt->ascent=0; tt->descent=0; tt->line_gap=0;
     s=read_file_alloc(ih,st,L"\\Launcher Icons\\DejaVuSans.ttf",&tt->data,&tt->size); if(EFI_ERROR(s)||tt->data==NULL) return;
     off=stbtt_GetFontOffsetForIndex(tt->data,0); if(off<0 || !stbtt_InitFont(&tt->font,tt->data,off)) return;
-    tt->scale=stbtt_ScaleForPixelHeight(&tt->font,12.0f);
+    tt->scale=stbtt_ScaleForPixelHeight(&tt->font,16.0f);
     stbtt_GetFontVMetrics(&tt->font,&tt->ascent,&tt->descent,&tt->line_gap);
     tt->ok=TRUE;
 }
 
+
+static VOID draw_tt_text(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *text, int x, int y, EFI_GRAPHICS_OUTPUT_BLT_PIXEL fg, EFI_GRAPHICS_OUTPUT_BLT_PIXEL bgc){
+    CHAR8 txt[LAUNCHER_NAME_MAX]; UINTN i=0,n=0; int baseline,pen_x,text_w=0,pad=2; UINTN bw,bh;
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *bg;
+    if(tt==NULL || !tt->ok || text==NULL) return;
+    while(text[i]!=0 && i+1<LAUNCHER_NAME_MAX){ CHAR16 ch=text[i]; txt[i]=(ch<128)?(CHAR8)ch:'?'; i++; } txt[i]=0; n=i;
+    for(i=0;i<n;i++){
+        int cp=(unsigned char)txt[i],adv=0,lsb=0;
+        stbtt_GetCodepointHMetrics(&tt->font,cp,&adv,&lsb);
+        text_w += (int)(adv*tt->scale);
+        if(i+1<n) text_w += (int)(stbtt_GetCodepointKernAdvance(&tt->font,cp,(unsigned char)txt[i+1])*tt->scale);
+        (void)lsb;
+    }
+    if(text_w<1) text_w=1;
+    bw=(UINTN)(text_w+pad*2); bh=16;
+    if(x<0||y<0) return;
+    fill(g,(UINTN)x,(UINTN)y,bw,bh,bgc);
+    bg=AllocatePool(bw*bh*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)); if(bg==NULL) return;
+    uefi_call_wrapper(g->Blt,10,g,bg,EfiBltVideoToBltBuffer,(UINTN)x,(UINTN)y,0,0,bw,bh,0);
+    baseline=y + (int)(tt->ascent * tt->scale);
+    pen_x=x+pad;
+    for(i=0;i<n;i++){
+        int cp=(unsigned char)txt[i],gw,gh,xoff,yoff,adv=0,lsb=0; unsigned char *bm; UINTN row,col;
+        bm=stbtt_GetCodepointBitmap(&tt->font,0,tt->scale,cp,&gw,&gh,&xoff,&yoff);
+        if(bm!=NULL){
+            int gx=pen_x+xoff, gy=baseline+yoff;
+            for(row=0;row<(UINTN)gh;row++) for(col=0;col<(UINTN)gw;col++){
+                UINTN dx=(UINTN)(gx+(int)col), dy=(UINTN)(gy+(int)row);
+                if(dx>=(UINTN)x && dx<(UINTN)x+bw && dy>=(UINTN)y && dy<(UINTN)y+bh){
+                    UINTN bi=(dy-(UINTN)y)*bw + (dx-(UINTN)x); UINT8 a=bm[row*(UINTN)gw+col];
+                    if(a){ UINT8 inv=(UINT8)(255-a);
+                        bg[bi].Red=(UINT8)((fg.Red*a + bg[bi].Red*inv)/255);
+                        bg[bi].Green=(UINT8)((fg.Green*a + bg[bi].Green*inv)/255);
+                        bg[bi].Blue=(UINT8)((fg.Blue*a + bg[bi].Blue*inv)/255);
+                    }
+                }
+            }
+            stbtt_FreeBitmap(bm,NULL);
+        }
+        stbtt_GetCodepointHMetrics(&tt->font,cp,&adv,&lsb); pen_x += (int)(adv*tt->scale);
+        if(i+1<n) pen_x += (int)(stbtt_GetCodepointKernAdvance(&tt->font,cp,(unsigned char)txt[i+1])*tt->scale);
+        (void)lsb;
+    }
+    uefi_call_wrapper(g->Blt,10,g,bg,EfiBltBufferToVideo,0,0,(UINTN)x,(UINTN)y,bw,bh,0);
+    FreePool(bg);
+}
+
 static VOID draw_label_centered_under_icon(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *name, UINTN icon_x, UINTN icon_y){
-    CHAR8 txt[LAUNCHER_NAME_MAX]; UINTN i=0,n=0,max_chars=10; int x,y,baseline,pen_x;
+    CHAR8 txt[LAUNCHER_NAME_MAX]; UINTN i=0,n=0,max_chars=10; int x,y,baseline,pen_x; int text_w=0,pad=2;
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL *bg; UINTN bw,bh;
     if(tt==NULL || !tt->ok) return;
     while(name[i]!=0 && i+1<LAUNCHER_NAME_MAX){ CHAR16 ch=name[i]; txt[i]=(ch<128)?(CHAR8)ch:'?'; i++; } txt[i]=0; n=i;
     if(n>max_chars){ txt[max_chars-3]='.'; txt[max_chars-2]='.'; txt[max_chars-1]='.'; txt[max_chars]=0; n=max_chars; }
-    bw=(UINTN)(n*8+4); bh=16;
+    for(i=0;i<n;i++){
+        int cp=(unsigned char)txt[i],adv=0,lsb=0;
+        stbtt_GetCodepointHMetrics(&tt->font,cp,&adv,&lsb);
+        text_w += (int)(adv*tt->scale);
+        if(i+1<n) text_w += (int)(stbtt_GetCodepointKernAdvance(&tt->font,cp,(unsigned char)txt[i+1])*tt->scale);
+        (void)lsb;
+    }
+    if(text_w<1) text_w=1;
+    bw=(UINTN)(text_w + pad*2); bh=16;
     x=(int)(icon_x + ((ICON_PX > bw) ? ((ICON_PX - bw)/2) : 0));
     y=(int)(icon_y + ICON_PX + 4);
     if(x<0||y<0) return;
     bg=AllocatePool(bw*bh*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)); if(bg==NULL) return;
     uefi_call_wrapper(g->Blt,10,g,bg,EfiBltVideoToBltBuffer,(UINTN)x,(UINTN)y,0,0,bw,bh,0);
     baseline=y + (int)(tt->ascent * tt->scale);
-    pen_x=x+1;
+    pen_x=x+pad;
     for(i=0;i<n;i++){
         int cp=(unsigned char)txt[i],gw,gh,xoff,yoff,adv=0,lsb=0; unsigned char *bm; UINTN row,col;
         bm=stbtt_GetCodepointBitmap(&tt->font,0,tt->scale,cp,&gw,&gh,&xoff,&yoff);
@@ -216,7 +271,7 @@ static VOID load_icon(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *icon_name, IC
  if (ap != NULL && ap->WaitForInput != NULL) events[evn++] = ap->WaitForInput;
  while(1){ UINTN i,start,end; EFI_SIMPLE_POINTER_STATE ps; ZeroMem(&ps, sizeof(ps));
   if(need_redraw){ start=scroll*cols; end=start+visible_rows*cols; if(end>count) end=count;
-   fill(g,0,0,g->Mode->Info->HorizontalResolution,g->Mode->Info->VerticalResolution,desk); fill(g,wx,wy,ww,wh,win); fill(g,wx,wy,ww,30,title); PrintAt((wx/8)+2,wy/16,L"Launcher Desktop");
+   fill(g,0,0,g->Mode->Info->HorizontalResolution,g->Mode->Info->VerticalResolution,desk); fill(g,wx,wy,ww,wh,win); fill(g,wx,wy,ww,30,title); { CHAR16 ttl[64]; EFI_GRAPHICS_OUTPUT_BLT_PIXEL white={255,255,255,0}; SPrint(ttl,sizeof(ttl),L"Launcher Desktop - /"); draw_tt_text(g,&ttfont,ttl,(int)(wx+12),(int)(wy+7),white,title); }
 	   for(i=start;i<end;i++){ UINTN vi=i-start,row=vi/cols,col=vi%cols,x=wx+12+col*cell_w+cell_pad_x/2,y=content_y+row*cell_h; fill(g,x,y,ICON_PX,ICON_PX,win); if(i==sel){ fill(g,x-2,y-2,ICON_PX+4,2,selc); fill(g,x-2,y+ICON_PX,ICON_PX+4,2,selc); fill(g,x-2,y,2,ICON_PX,selc); fill(g,x+ICON_PX,y,2,ICON_PX,selc);} if(icons[i].ok){ blit_icon_alpha(g,&icons[i],x,y,win);} draw_label_centered_under_icon(g, &ttfont, items[i].name, x, y);} 
    if(max_scroll>0){ UINTN barx=wx+ww-14,bh=content_h-4,th=(bh*visible_rows)/rows,ty=content_y+2+((bh-th)*scroll)/max_scroll; EFI_GRAPHICS_OUTPUT_BLT_PIXEL sb={120,120,120,0},thumb={50,50,50,0}; fill(g,barx,content_y+2,10,bh,sb); fill(g,barx,ty,10,th,thumb);} 
    need_redraw=FALSE;
