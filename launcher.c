@@ -43,6 +43,13 @@ typedef struct {
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL *px;
 } ICON_IMAGE;
 
+typedef struct {
+    BOOLEAN ok;
+    UINTN w;
+    UINTN h;
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *px;
+} POINTER_IMAGE;
+
 static VOID fill(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, UINTN x, UINTN y, UINTN w, UINTN h, EFI_GRAPHICS_OUTPUT_BLT_PIXEL c){ if(!w||!h) return; uefi_call_wrapper(g->Blt,10,g,&c,EfiBltVideoFill,0,0,x,y,w,h,0);} 
 static BOOLEAN contains_ci(const CHAR8 *s, const CHAR8 *pat){ UINTN i,j; for(i=0;s&&s[i];i++){ for(j=0;pat[j]&&s[i+j];j++){ CHAR8 a=s[i+j],b=pat[j]; if(a>='a'&&a<='z')a-=32; if(b>='a'&&b<='z')b-=32; if(a!=b) break;} if(!pat[j]) return TRUE;} return FALSE; }
 static VOID join_path(CHAR16 *out, UINTN out_sz, CHAR16 *base, CHAR16 *name){ if(StrCmp(base,L"\\")==0) SPrint(out,out_sz,L"\\%s",name); else SPrint(out,out_sz,L"%s\\%s",base,name); }
@@ -248,13 +255,51 @@ static VOID load_icon(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *icon_name, IC
     uefi_call_wrapper(f->Close,1,f); uefi_call_wrapper(root->Close,1,root);
 }
 
- EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; CHAR16 cwd[256]=L"\\"; EFI_GRAPHICS_OUTPUT_PROTOCOL *g=NULL; EFI_GUID gg=gEfiGraphicsOutputProtocolGuid; EFI_SIMPLE_POINTER_PROTOCOL *sp=NULL; EFI_GUID spg=EFI_SIMPLE_POINTER_PROTOCOL_GUID; EFI_ABSOLUTE_POINTER_PROTOCOL *ap=NULL; EFI_GUID apg=EFI_ABSOLUTE_POINTER_PROTOCOL_GUID; EFI_INPUT_KEY k; ITEM items[MAX_ITEMS]; ICON_IMAGE icons[MAX_ITEMS]; TT_FONT ttfont; UINTN count,scroll=0,sel=(UINTN)-1,last_sel=(UINTN)-1,last_click_ms=0; UINTN cols=1,cell_w=90,cell_h=83,cell_pad_x=26; UINTN ww,wh,wx,wy,content_y,content_h,rows,visible_rows,max_scroll; BOOLEAN need_redraw=TRUE; INTN px=200,py=140,ppx=-1,ppy=-1; EFI_EVENT events[3]; UINTN evn=0,which=0; EFI_GRAPHICS_OUTPUT_BLT_PIXEL ptr_bg[12*14]; BOOLEAN ptr_bg_valid=FALSE; UINT64 last_abs_x=0,last_abs_y=0; UINT32 last_abs_buttons=0; BOOLEAN prev_left=FALSE;
+ 
+static VOID load_pointer_png(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, POINTER_IMAGE *out){
+    UINT8 *file_data=NULL,*png=NULL; UINTN file_sz=0; int pw=0,ph=0,pc=0; EFI_STATUS s; UINTN i,n;
+    out->ok=FALSE; out->w=0; out->h=0; out->px=NULL;
+    s=read_file_alloc(ih,st,L"\\.launcher\\pointer.png",&file_data,&file_sz);
+    if(EFI_ERROR(s)||file_data==NULL||file_sz==0) return;
+    png=stbi_load_from_memory((const stbi_uc*)file_data,(int)file_sz,&pw,&ph,&pc,4);
+    uefi_call_wrapper(st->BootServices->FreePool,1,file_data);
+    if(png==NULL||pw<=0||ph<=0||pw>128||ph>128){ if(png) stbi_image_free(png); return; }
+    s=uefi_call_wrapper(st->BootServices->AllocatePool,3,EfiLoaderData,(UINTN)pw*(UINTN)ph*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL),(VOID**)&out->px);
+    if(EFI_ERROR(s)||out->px==NULL){ stbi_image_free(png); return; }
+    n=(UINTN)pw*(UINTN)ph;
+    for(i=0;i<n;i++){ UINTN si=i*4; out->px[i].Red=png[si+0]; out->px[i].Green=png[si+1]; out->px[i].Blue=png[si+2]; out->px[i].Reserved=png[si+3]; }
+    stbi_image_free(png);
+    out->w=(UINTN)pw; out->h=(UINTN)ph; out->ok=TRUE;
+}
+
+static VOID blit_pointer_alpha(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, POINTER_IMAGE *ptr_img, EFI_GRAPHICS_OUTPUT_BLT_PIXEL *bg, UINTN x, UINTN y){
+    UINTN row,col,w=ptr_img->w,h=ptr_img->h,n=w*h;
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *tmp;
+    tmp=AllocatePool(n*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+    if(tmp==NULL){ uefi_call_wrapper(g->Blt,10,g,ptr_img->px,EfiBltBufferToVideo,0,0,x,y,w,h,0); return; }
+    CopyMem(tmp,bg,n*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+    for(row=0;row<h;row++) for(col=0;col<w;col++){
+        UINTN i=row*w+col; UINT8 a=ptr_img->px[i].Reserved, inv=(UINT8)(255-a);
+        tmp[i].Red=(UINT8)((ptr_img->px[i].Red*a + tmp[i].Red*inv)/255);
+        tmp[i].Green=(UINT8)((ptr_img->px[i].Green*a + tmp[i].Green*inv)/255);
+        tmp[i].Blue=(UINT8)((ptr_img->px[i].Blue*a + tmp[i].Blue*inv)/255);
+        tmp[i].Reserved=0;
+    }
+    uefi_call_wrapper(g->Blt,10,g,tmp,EfiBltBufferToVideo,0,0,x,y,w,h,0);
+    FreePool(tmp);
+}
+
+ EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; CHAR16 cwd[256]=L"\\"; EFI_GRAPHICS_OUTPUT_PROTOCOL *g=NULL; EFI_GUID gg=gEfiGraphicsOutputProtocolGuid; EFI_SIMPLE_POINTER_PROTOCOL *sp=NULL; EFI_GUID spg=EFI_SIMPLE_POINTER_PROTOCOL_GUID; EFI_ABSOLUTE_POINTER_PROTOCOL *ap=NULL; EFI_GUID apg=EFI_ABSOLUTE_POINTER_PROTOCOL_GUID; EFI_INPUT_KEY k; ITEM items[MAX_ITEMS]; ICON_IMAGE icons[MAX_ITEMS]; TT_FONT ttfont; UINTN count,scroll=0,sel=(UINTN)-1,last_sel=(UINTN)-1,last_click_ms=0; UINTN cols=1,cell_w=90,cell_h=83,cell_pad_x=26; UINTN ww,wh,wx,wy,content_y,content_h,rows,visible_rows,max_scroll; BOOLEAN need_redraw=TRUE; INTN px=200,py=140,ppx=-1,ppy=-1; EFI_EVENT events[3]; UINTN evn=0,which=0; POINTER_IMAGE ptr_img; EFI_GRAPHICS_OUTPUT_BLT_PIXEL *ptr_bg=NULL; UINTN ptr_w=12,ptr_h=14; BOOLEAN ptr_bg_valid=FALSE; UINT64 last_abs_x=0,last_abs_y=0; UINT32 last_abs_buttons=0; BOOLEAN prev_left=FALSE;
  EFI_GRAPHICS_OUTPUT_BLT_PIXEL desk={70,110,40,0},win={192,192,192,0},title={140,90,60,0},selc={255,220,40,0},ptr={0,0,255,0};
  InitializeLib(ih,st); disable_uefi_watchdog(st);
  s=uefi_call_wrapper(st->BootServices->LocateProtocol,3,&gg,NULL,(VOID**)&g); if(EFI_ERROR(s)) return s;
  uefi_call_wrapper(st->BootServices->LocateProtocol,3,&spg,NULL,(VOID**)&sp);
  uefi_call_wrapper(st->BootServices->LocateProtocol,3,&apg,NULL,(VOID**)&ap);
  load_tt_font(ih,st,&ttfont);
+ load_pointer_png(ih,st,&ptr_img);
+ if(ptr_img.ok){ ptr_w=ptr_img.w; ptr_h=ptr_img.h; }
+ ptr_bg=AllocatePool(ptr_w*ptr_h*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+ if(ptr_bg==NULL){ ptr_w=12; ptr_h=14; }
  { UINTN i; for(i=0;i<MAX_ITEMS;i++){ icons[i].px=NULL; icons[i].ok=FALSE; icons[i].w=0; icons[i].h=0; } }
  count=load_items(ih,st,items,cwd); { UINTN i; for(i=0;i<count;i++) load_icon(ih,st,items[i].icon,&icons[i]); }
  ww=(g->Mode->Info->HorizontalResolution*3)/4; wh=(g->Mode->Info->VerticalResolution*3)/4; wx=(g->Mode->Info->HorizontalResolution-ww)/2; wy=(g->Mode->Info->VerticalResolution-wh)/2; content_y=wy+36; content_h=wh-46; { UINTN usable_w=(ww>26)?(ww-26):ww; cols=usable_w/cell_w; if(cols<1) cols=1; } rows=(count+cols-1)/cols; visible_rows=content_h/cell_h; if(visible_rows<1) visible_rows=1; max_scroll=(rows>visible_rows)?(rows-visible_rows):0;
@@ -269,25 +314,25 @@ static VOID load_icon(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *icon_name, IC
    need_redraw=FALSE;
   }
 	  if(ptr_bg_valid && ppx>=0 && ppy>=0){
-	    uefi_call_wrapper(g->Blt,10,g,ptr_bg,EfiBltBufferToVideo,0,0,(UINTN)ppx,(UINTN)ppy,12,14,0);
+	    uefi_call_wrapper(g->Blt,10,g,ptr_bg,EfiBltBufferToVideo,0,0,(UINTN)ppx,(UINTN)ppy,ptr_w,ptr_h,0);
 	    ptr_bg_valid = FALSE;
 	  }
-	  if(px >= 0 && py >= 0 && (UINTN)px+12 < g->Mode->Info->HorizontalResolution && (UINTN)py+14 < g->Mode->Info->VerticalResolution){
-	    uefi_call_wrapper(g->Blt,10,g,ptr_bg,EfiBltVideoToBltBuffer,(UINTN)px,(UINTN)py,0,0,12,14,0);
-	    ptr_bg_valid = TRUE;
+	  if(px >= 0 && py >= 0 && (UINTN)px+ptr_w < g->Mode->Info->HorizontalResolution && (UINTN)py+ptr_h < g->Mode->Info->VerticalResolution){
+	    if(ptr_bg!=NULL){ uefi_call_wrapper(g->Blt,10,g,ptr_bg,EfiBltVideoToBltBuffer,(UINTN)px,(UINTN)py,0,0,ptr_w,ptr_h,0); ptr_bg_valid = TRUE; }
 	  }
-	  fill(g,px,py,2,14,ptr); fill(g,px,py,10,2,ptr); fill(g,px+2,py+2,8,2,ptr); fill(g,px+2,py+4,6,2,ptr); fill(g,px+2,py+6,4,2,ptr);
+	  if(ptr_img.ok && ptr_bg!=NULL){ blit_pointer_alpha(g,&ptr_img,ptr_bg,(UINTN)px,(UINTN)py); }
+	  else { fill(g,px,py,2,14,ptr); fill(g,px,py,10,2,ptr); fill(g,px+2,py+2,8,2,ptr); fill(g,px+2,py+4,6,2,ptr); fill(g,px+2,py+6,4,2,ptr); }
 	  ppx=px; ppy=py;
   s = uefi_call_wrapper(st->BootServices->WaitForEvent,3,evn,events,&which);
   if(EFI_ERROR(s)) break;
   if(which==0 && !EFI_ERROR(uefi_call_wrapper(st->ConIn->ReadKeyStroke,2,st->ConIn,&k))) break;
 	  if(ap != NULL){ EFI_ABSOLUTE_POINTER_STATE as; if(!EFI_ERROR(uefi_call_wrapper(ap->GetState,2,ap,&as))){ BOOLEAN changed = (as.CurrentX!=last_abs_x)||(as.CurrentY!=last_abs_y)||(as.ActiveButtons!=last_abs_buttons); if(changed){ UINT64 minx=ap->Mode->AbsoluteMinX,maxx=ap->Mode->AbsoluteMaxX,miny=ap->Mode->AbsoluteMinY,maxy=ap->Mode->AbsoluteMaxY; UINT64 rx=(maxx>minx)?(maxx-minx):1, ry=(maxy>miny)?(maxy-miny):1; UINT64 ox=(as.CurrentX>minx)?(as.CurrentX-minx):0, oy=(as.CurrentY>miny)?(as.CurrentY-miny):0; px=(INTN)((ox*(g->Mode->Info->HorizontalResolution-1))/rx); py=(INTN)((oy*(g->Mode->Info->VerticalResolution-1))/ry);} last_abs_x=as.CurrentX; last_abs_y=as.CurrentY; last_abs_buttons=as.ActiveButtons; if(as.ActiveButtons&EFI_ABSP_TouchActive) ps.LeftButton=1; }} 
-	  if(sp && !EFI_ERROR(uefi_call_wrapper(sp->GetState,2,sp,&ps))){ INTN scale_x=1024,scale_y=1024,step_x,step_y; if(sp->Mode!=NULL){ if(sp->Mode->ResolutionX>0) scale_x=(INTN)(sp->Mode->ResolutionX/64); if(sp->Mode->ResolutionY>0) scale_y=(INTN)(sp->Mode->ResolutionY/64);} if(scale_x<1)scale_x=1; if(scale_y<1)scale_y=1; step_x=(INTN)(ps.RelativeMovementX/scale_x); step_y=(INTN)(ps.RelativeMovementY/scale_y); if(step_x==0 && ps.RelativeMovementX!=0) step_x=(ps.RelativeMovementX>0)?1:-1; if(step_y==0 && ps.RelativeMovementY!=0) step_y=(ps.RelativeMovementY>0)?1:-1; px += step_x; py += step_y; if(px<0)px=0; if(py<0)py=0; if((UINTN)px>=g->Mode->Info->HorizontalResolution)px=g->Mode->Info->HorizontalResolution-1; if((UINTN)py>=g->Mode->Info->VerticalResolution)py=g->Mode->Info->VerticalResolution-1;
+	  if(sp && !EFI_ERROR(uefi_call_wrapper(sp->GetState,2,sp,&ps))){ INTN scale_x=1024,scale_y=1024,step_x,step_y; if(sp->Mode!=NULL){ if(sp->Mode->ResolutionX>0) scale_x=(INTN)(sp->Mode->ResolutionX/64); if(sp->Mode->ResolutionY>0) scale_y=(INTN)(sp->Mode->ResolutionY/64);} if(scale_x<1)scale_x=1; if(scale_y<1)scale_y=1; step_x=(INTN)(ps.RelativeMovementX/scale_x); step_y=(INTN)(ps.RelativeMovementY/scale_y); if(step_x==0 && ps.RelativeMovementX!=0) step_x=(ps.RelativeMovementX>0)?1:-1; if(step_y==0 && ps.RelativeMovementY!=0) step_y=(ps.RelativeMovementY>0)?1:-1; px += step_x; py += step_y; if(px<0)px=0; if(py<0)py=0; if((UINTN)px+ptr_w>=g->Mode->Info->HorizontalResolution)px=(INTN)(g->Mode->Info->HorizontalResolution-ptr_w-1); if((UINTN)py+ptr_h>=g->Mode->Info->VerticalResolution)py=(INTN)(g->Mode->Info->VerticalResolution-ptr_h-1);
     if(ps.RelativeMovementZ>0 && scroll>0){ scroll--; need_redraw=TRUE; } if(ps.RelativeMovementZ<0 && scroll<max_scroll){ scroll++; need_redraw=TRUE; }
 	    if(ps.LeftButton && !prev_left){ UINTN start2=scroll*cols, end2=start2+visible_rows*cols, hit=(UINTN)-1, j; if(end2>count) end2=count; for(j=start2;j<end2;j++){ UINTN vi=j-start2,row=vi/cols,col=vi%cols,ix=wx+12+col*cell_w+cell_pad_x/2,iy=content_y+row*cell_h; if(px>=(INTN)(ix-6) && px<(INTN)(ix+ICON_PX+6) && py>=(INTN)(iy-6) && py<(INTN)(iy+ICON_PX+6)){ hit=j; break; } } if(hit!=(UINTN)-1){ EFI_TIME t; UINTN ms=0; BOOLEAN have_ms=FALSE; UINTN prev_sel=sel; if(sel!=hit){ sel=hit; if(!need_redraw){ if(prev_sel>=start2 && prev_sel<end2) draw_item_cell(g,&ttfont,items,icons,prev_sel,start2,cols,wx,cell_w,cell_pad_x,content_y,cell_h,FALSE,win,selc); draw_item_cell(g,&ttfont,items,icons,hit,start2,cols,wx,cell_w,cell_pad_x,content_y,cell_h,TRUE,win,selc);} else need_redraw=TRUE; } if(!EFI_ERROR(uefi_call_wrapper(st->RuntimeServices->GetTime,2,&t,NULL))){ ms=t.Second*1000+t.Nanosecond/1000000; have_ms=TRUE; } if(last_sel==hit && have_ms && (ms-last_click_ms<450)){ if(items[hit].is_dir){ if(StrCmp(items[hit].name,L"..")==0){ UINTN len=StrLen(cwd); if(len>1){ while(len>1 && cwd[len-1]!=L'\\') len--; if(len<=1) { cwd[1]=0; } else { cwd[len-1]=0; } } } else { CHAR16 np[256]; join_path(np,sizeof(np),cwd,items[hit].name); StrCpy(cwd,np); } } else { CHAR8 type[64],handler[128]; read_meta_type_handler(ih,st,items[hit].name,type,sizeof(type),handler,sizeof(handler)); if(is_program_type(type) || handler[0]==0){ run_item(ih,st,cwd,items[hit].name); } else { CHAR16 h16[128]; ascii_to_char16(handler,h16,128); run_item_with_args(ih,st,cwd,h16,items[hit].name); } } { UINTN i; for(i=0;i<MAX_ITEMS;i++){ if(icons[i].px){ uefi_call_wrapper(st->BootServices->FreePool,1,icons[i].px); icons[i].px=NULL; icons[i].ok=FALSE; }} } count=load_items(ih,st,items,cwd); { UINTN i; for(i=0;i<count;i++) load_icon(ih,st,items[i].icon,&icons[i]); UINTN usable_w=(ww>26)?(ww-26):ww; cols=usable_w/cell_w; if(cols<1) cols=1; rows=(count+cols-1)/cols; visible_rows=content_h/cell_h; if(visible_rows<1) visible_rows=1; max_scroll=(rows>visible_rows)?(rows-visible_rows):0; if(scroll>max_scroll) scroll=max_scroll; } need_redraw=TRUE; } if(have_ms) last_click_ms=ms; last_sel=hit; } }
 	    prev_left = ps.LeftButton ? TRUE : FALSE;
   }
  }
- { UINTN i; for(i=0;i<count;i++) if(icons[i].px) uefi_call_wrapper(st->BootServices->FreePool,1,icons[i].px); if(ttfont.data) uefi_call_wrapper(st->BootServices->FreePool,1,ttfont.data); }
+ { UINTN i; for(i=0;i<count;i++) if(icons[i].px) uefi_call_wrapper(st->BootServices->FreePool,1,icons[i].px); if(ttfont.data) uefi_call_wrapper(st->BootServices->FreePool,1,ttfont.data); if(ptr_bg) FreePool(ptr_bg); if(ptr_img.px) FreePool(ptr_img.px); }
  return EFI_SUCCESS;
 }
