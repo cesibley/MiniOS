@@ -50,7 +50,22 @@ typedef struct {
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL *px;
 } POINTER_IMAGE;
 
-static VOID fill(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, UINTN x, UINTN y, UINTN w, UINTN h, EFI_GRAPHICS_OUTPUT_BLT_PIXEL c){ if(!w||!h) return; uefi_call_wrapper(g->Blt,10,g,&c,EfiBltVideoFill,0,0,x,y,w,h,0);} 
+typedef struct { BOOLEAN use_backbuf; EFI_GRAPHICS_OUTPUT_BLT_PIXEL *buf; UINTN w; UINTN h; } RENDER_TARGET;
+
+static VOID rt_read(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, UINTN x, UINTN y, UINTN w, UINTN h, EFI_GRAPHICS_OUTPUT_BLT_PIXEL *out){
+    UINTN row;
+    if(!w||!h||out==NULL) return;
+    if(rt && rt->use_backbuf && rt->buf){ for(row=0; row<h; row++) CopyMem(out + row*w, rt->buf + (y+row)*rt->w + x, w*sizeof(*out)); }
+    else uefi_call_wrapper(g->Blt,10,g,out,EfiBltVideoToBltBuffer,x,y,0,0,w,h,0);
+}
+static VOID rt_write(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, UINTN x, UINTN y, UINTN w, UINTN h, EFI_GRAPHICS_OUTPUT_BLT_PIXEL *in){
+    UINTN row;
+    if(!w||!h||in==NULL) return;
+    if(rt && rt->use_backbuf && rt->buf){ for(row=0; row<h; row++) CopyMem(rt->buf + (y+row)*rt->w + x, in + row*w, w*sizeof(*in)); }
+    else uefi_call_wrapper(g->Blt,10,g,in,EfiBltBufferToVideo,0,0,x,y,w,h,0);
+}
+
+static VOID fill(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, UINTN x, UINTN y, UINTN w, UINTN h, EFI_GRAPHICS_OUTPUT_BLT_PIXEL c){ UINTN row,col; if(!w||!h) return; if(rt&&rt->use_backbuf&&rt->buf){ for(row=0;row<h;row++) for(col=0;col<w;col++) rt->buf[(y+row)*rt->w+(x+col)]=c; } else uefi_call_wrapper(g->Blt,10,g,&c,EfiBltVideoFill,0,0,x,y,w,h,0);} 
 static BOOLEAN contains_ci(const CHAR8 *s, const CHAR8 *pat){ UINTN i,j; for(i=0;s&&s[i];i++){ for(j=0;pat[j]&&s[i+j];j++){ CHAR8 a=s[i+j],b=pat[j]; if(a>='a'&&a<='z')a-=32; if(b>='a'&&b<='z')b-=32; if(a!=b) break;} if(!pat[j]) return TRUE;} return FALSE; }
 static VOID join_path(CHAR16 *out, UINTN out_sz, CHAR16 *base, CHAR16 *name){ if(StrCmp(base,L"\\")==0) SPrint(out,out_sz,L"\\%s",name); else SPrint(out,out_sz,L"%s\\%s",base,name); }
 
@@ -97,7 +112,7 @@ static VOID load_tt_font(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, TT_FONT *tt){
 }
 
 
-static VOID draw_tt_text(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *text, int x, int y, EFI_GRAPHICS_OUTPUT_BLT_PIXEL fg, EFI_GRAPHICS_OUTPUT_BLT_PIXEL bgc){
+static VOID draw_tt_text(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *text, int x, int y, EFI_GRAPHICS_OUTPUT_BLT_PIXEL fg, EFI_GRAPHICS_OUTPUT_BLT_PIXEL bgc){
     CHAR8 txt[LAUNCHER_NAME_MAX]; UINTN i=0,n=0; int baseline,pen_x,text_w=0,pad=2; UINTN bw,bh;
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL *bg;
     if(tt==NULL || !tt->ok || text==NULL) return;
@@ -112,9 +127,9 @@ static VOID draw_tt_text(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *t
     if(text_w<1) text_w=1;
     bw=(UINTN)(text_w+pad*2); bh=16;
     if(x<0||y<0) return;
-    fill(g,(UINTN)x,(UINTN)y,bw,bh,bgc);
+    fill(rt,g,(UINTN)x,(UINTN)y,bw,bh,bgc);
     bg=AllocatePool(bw*bh*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)); if(bg==NULL) return;
-    uefi_call_wrapper(g->Blt,10,g,bg,EfiBltVideoToBltBuffer,(UINTN)x,(UINTN)y,0,0,bw,bh,0);
+    rt_read(rt,g,(UINTN)x,(UINTN)y,bw,bh,bg);
     baseline=y + (int)(tt->ascent * tt->scale);
     pen_x=x+pad;
     for(i=0;i<n;i++){
@@ -139,11 +154,11 @@ static VOID draw_tt_text(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *t
         if(i+1<n) pen_x += (int)(stbtt_GetCodepointKernAdvance(&tt->font,cp,(unsigned char)txt[i+1])*tt->scale);
         (void)lsb;
     }
-    uefi_call_wrapper(g->Blt,10,g,bg,EfiBltBufferToVideo,0,0,(UINTN)x,(UINTN)y,bw,bh,0);
+    rt_write(rt,g,(UINTN)x,(UINTN)y,bw,bh,bg);
     FreePool(bg);
 }
 
-static VOID draw_label_centered_under_icon(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *name, UINTN icon_x, UINTN icon_y){
+static VOID draw_label_centered_under_icon(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *tt, CHAR16 *name, UINTN icon_x, UINTN icon_y){
     CHAR8 txt[LAUNCHER_NAME_MAX]; UINTN i=0,n=0,max_chars=10; int x,y,baseline,pen_x; int text_w=0,pad=2;
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL *bg; UINTN bw,bh;
     if(tt==NULL || !tt->ok) return;
@@ -162,7 +177,7 @@ static VOID draw_label_centered_under_icon(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_F
     y=(int)(icon_y + ICON_PX + 4);
     if(x<0||y<0) return;
     bg=AllocatePool(bw*bh*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)); if(bg==NULL) return;
-    uefi_call_wrapper(g->Blt,10,g,bg,EfiBltVideoToBltBuffer,(UINTN)x,(UINTN)y,0,0,bw,bh,0);
+    rt_read(rt,g,(UINTN)x,(UINTN)y,bw,bh,bg);
     baseline=y + (int)(tt->ascent * tt->scale);
     pen_x=x+pad;
     for(i=0;i<n;i++){
@@ -185,11 +200,11 @@ static VOID draw_label_centered_under_icon(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_F
         if(i+1<n) pen_x += (int)(stbtt_GetCodepointKernAdvance(&tt->font,cp,(unsigned char)txt[i+1])*tt->scale);
         (void)lsb;
     }
-    uefi_call_wrapper(g->Blt,10,g,bg,EfiBltBufferToVideo,0,0,(UINTN)x,(UINTN)y,bw,bh,0);
+    rt_write(rt,g,(UINTN)x,(UINTN)y,bw,bh,bg);
     FreePool(bg);
 }
 
-static VOID blit_icon_alpha(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, ICON_IMAGE *icon, UINTN x, UINTN y, EFI_GRAPHICS_OUTPUT_BLT_PIXEL bg){
+static VOID blit_icon_alpha(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, ICON_IMAGE *icon, UINTN x, UINTN y, EFI_GRAPHICS_OUTPUT_BLT_PIXEL bg){
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL tmp[ICON_PX * ICON_PX];
     UINTN i, n;
     if (icon == NULL || !icon->ok || icon->px == NULL) return;
@@ -202,15 +217,15 @@ static VOID blit_icon_alpha(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, ICON_IMAGE *icon, U
         tmp[i].Blue  = (UINT8)((icon->px[i].Blue  * a + bg.Blue  * (255 - a)) / 255);
         tmp[i].Reserved = 0;
     }
-    uefi_call_wrapper(g->Blt,10,g,tmp,EfiBltBufferToVideo,0,0,x,y,icon->w,icon->h,0);
+    rt_write(rt,g,x,y,icon->w,icon->h,tmp);
 }
 
-static VOID draw_item_cell(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *ttfont, ITEM *items, ICON_IMAGE *icons, UINTN idx, UINTN start, UINTN cols, UINTN wx, UINTN cell_w, UINTN cell_pad_x, UINTN content_y, UINTN cell_h, BOOLEAN selected, EFI_GRAPHICS_OUTPUT_BLT_PIXEL win, EFI_GRAPHICS_OUTPUT_BLT_PIXEL selc){
+static VOID draw_item_cell(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *ttfont, ITEM *items, ICON_IMAGE *icons, UINTN idx, UINTN start, UINTN cols, UINTN wx, UINTN cell_w, UINTN cell_pad_x, UINTN content_y, UINTN cell_h, BOOLEAN selected, EFI_GRAPHICS_OUTPUT_BLT_PIXEL win, EFI_GRAPHICS_OUTPUT_BLT_PIXEL selc){
     UINTN vi=idx-start,row=vi/cols,col=vi%cols,x=wx+12+col*cell_w+cell_pad_x/2,y=content_y+row*cell_h;
-    fill(g,x-2,y-2,ICON_PX+4,ICON_PX+4,win);
-    if(selected){ fill(g,x-2,y-2,ICON_PX+4,2,selc); fill(g,x-2,y+ICON_PX,ICON_PX+4,2,selc); fill(g,x-2,y,2,ICON_PX,selc); fill(g,x+ICON_PX,y,2,ICON_PX,selc); }
-    if(icons[idx].ok){ blit_icon_alpha(g,&icons[idx],x,y,win); }
-    draw_label_centered_under_icon(g, ttfont, items[idx].name, x, y);
+    fill(rt,g,x-2,y-2,ICON_PX+4,ICON_PX+4,win);
+    if(selected){ fill(rt,g,x-2,y-2,ICON_PX+4,2,selc); fill(rt,g,x-2,y+ICON_PX,ICON_PX+4,2,selc); fill(rt,g,x-2,y,2,ICON_PX,selc); fill(rt,g,x+ICON_PX,y,2,ICON_PX,selc); }
+    if(icons[idx].ok){ blit_icon_alpha(rt,g,&icons[idx],x,y,win); }
+    draw_label_centered_under_icon(rt,g, ttfont, items[idx].name, x, y);
 }
 
 static VOID load_icon(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *icon_name, ICON_IMAGE *out){
@@ -303,29 +318,29 @@ typedef struct {
     UINTN x,y,w,h,content_y,content_h,cols,rows,visible_rows,max_scroll;
 } LAUNCHER_WINDOW;
 static BOOLEAN rects_intersect(UINTN ax,UINTN ay,UINTN aw,UINTN ah,UINTN bx,UINTN by,UINTN bw,UINTN bh){ return !(ax+aw<=bx || bx+bw<=ax || ay+ah<=by || by+bh<=ay); }
-static VOID draw_window(EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *ttfont, LAUNCHER_WINDOW *w, EFI_GRAPHICS_OUTPUT_BLT_PIXEL win, EFI_GRAPHICS_OUTPUT_BLT_PIXEL title, EFI_GRAPHICS_OUTPUT_BLT_PIXEL selc, EFI_GRAPHICS_OUTPUT_BLT_PIXEL btn, EFI_GRAPHICS_OUTPUT_BLT_PIXEL white){
+static VOID draw_window(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *ttfont, LAUNCHER_WINDOW *w, EFI_GRAPHICS_OUTPUT_BLT_PIXEL win, EFI_GRAPHICS_OUTPUT_BLT_PIXEL title, EFI_GRAPHICS_OUTPUT_BLT_PIXEL selc, EFI_GRAPHICS_OUTPUT_BLT_PIXEL btn, EFI_GRAPHICS_OUTPUT_BLT_PIXEL white){
     UINTN start=w->scroll*w->cols,end=start+w->visible_rows*w->cols,j; if(end>w->count) end=w->count;
-    fill(g,w->x,w->y,w->w,w->h,win); fill(g,w->x,w->y,w->w,30,title); { CHAR16 ttl[80]; SPrint(ttl,sizeof(ttl),L"Launcher - %s",w->cwd); draw_tt_text(g,ttfont,ttl,(int)(w->x+12),(int)(w->y+7),white,title);} fill(g,w->x+w->w-22,w->y+7,12,12,btn); draw_tt_text(g,ttfont,L"X",(int)(w->x+w->w-19),(int)(w->y+6),white,btn);
-    for(j=start;j<end;j++) draw_item_cell(g,ttfont,w->items,w->icons,j,start,w->cols,w->x,90,26,w->content_y,83,(j==w->sel),win,selc);
-    { EFI_GRAPHICS_OUTPUT_BLT_PIXEL grip={96,96,96,0}; fill(g,w->x+w->w-12,w->y+w->h-4,8,1,grip); fill(g,w->x+w->w-9,w->y+w->h-7,5,1,grip); fill(g,w->x+w->w-6,w->y+w->h-10,2,1,grip); }
-    if(w->max_scroll>0){ UINTN barx=w->x+w->w-14,bh=w->content_h-4,th=(bh*w->visible_rows)/w->rows,ty=w->content_y+2+((bh-th)*w->scroll)/w->max_scroll; EFI_GRAPHICS_OUTPUT_BLT_PIXEL sb={120,120,120,0},thumb={50,50,50,0}; fill(g,barx,w->content_y+2,10,bh,sb); fill(g,barx,ty,10,th,thumb);}
+    fill(rt,g,w->x,w->y,w->w,w->h,win); fill(rt,g,w->x,w->y,w->w,30,title); { CHAR16 ttl[80]; SPrint(ttl,sizeof(ttl),L"Launcher - %s",w->cwd); draw_tt_text(rt,g,ttfont,ttl,(int)(w->x+12),(int)(w->y+7),white,title);} fill(rt,g,w->x+w->w-22,w->y+7,12,12,btn); draw_tt_text(rt,g,ttfont,L"X",(int)(w->x+w->w-19),(int)(w->y+6),white,btn);
+    for(j=start;j<end;j++) draw_item_cell(rt,g,ttfont,w->items,w->icons,j,start,w->cols,w->x,90,26,w->content_y,83,(j==w->sel),win,selc);
+    { EFI_GRAPHICS_OUTPUT_BLT_PIXEL grip={96,96,96,0}; fill(rt,g,w->x+w->w-12,w->y+w->h-4,8,1,grip); fill(rt,g,w->x+w->w-9,w->y+w->h-7,5,1,grip); fill(rt,g,w->x+w->w-6,w->y+w->h-10,2,1,grip); }
+    if(w->max_scroll>0){ UINTN barx=w->x+w->w-14,bh=w->content_h-4,th=(bh*w->visible_rows)/w->rows,ty=w->content_y+2+((bh-th)*w->scroll)/w->max_scroll; EFI_GRAPHICS_OUTPUT_BLT_PIXEL sb={120,120,120,0},thumb={50,50,50,0}; fill(rt,g,barx,w->content_y+2,10,bh,sb); fill(rt,g,barx,ty,10,th,thumb);}
 }
 
 static VOID free_window_icons(EFI_SYSTEM_TABLE *st, LAUNCHER_WINDOW *w){ UINTN i; for(i=0;i<MAX_ITEMS;i++){ if(w->icons[i].px){ uefi_call_wrapper(st->BootServices->FreePool,1,w->icons[i].px); w->icons[i].px=NULL; } w->icons[i].ok=FALSE; w->icons[i].w=0; w->icons[i].h=0; } }
 static VOID reload_window(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, LAUNCHER_WINDOW *w){ UINTN i,usable_w; free_window_icons(st,w); w->count=load_items(ih,st,w->items,w->cwd); for(i=0;i<w->count;i++) load_icon(ih,st,w->items[i].icon,&w->icons[i]); usable_w=(w->w>26)?(w->w-26):w->w; w->cols=usable_w/90; if(w->cols<1) w->cols=1; w->rows=(w->count+w->cols-1)/w->cols; w->visible_rows=w->content_h/83; if(w->visible_rows<1) w->visible_rows=1; w->max_scroll=(w->rows>w->visible_rows)?(w->rows-w->visible_rows):0; if(w->scroll>w->max_scroll) w->scroll=w->max_scroll; }
 static VOID layout_window(LAUNCHER_WINDOW *w){ UINTN usable_w=(w->w>26)?(w->w-26):w->w; w->content_y=w->y+36; w->content_h=(w->h>46)?(w->h-46):1; w->cols=usable_w/90; if(w->cols<1) w->cols=1; w->rows=(w->count+w->cols-1)/w->cols; w->visible_rows=w->content_h/83; if(w->visible_rows<1) w->visible_rows=1; w->max_scroll=(w->rows>w->visible_rows)?(w->rows-w->visible_rows):0; if(w->scroll>w->max_scroll) w->scroll=w->max_scroll; }
 
-EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; EFI_GRAPHICS_OUTPUT_PROTOCOL *g=NULL; EFI_GUID gg=gEfiGraphicsOutputProtocolGuid; EFI_SIMPLE_POINTER_PROTOCOL *sp=NULL; EFI_GUID spg=EFI_SIMPLE_POINTER_PROTOCOL_GUID; EFI_ABSOLUTE_POINTER_PROTOCOL *ap=NULL; EFI_GUID apg=EFI_ABSOLUTE_POINTER_PROTOCOL_GUID; EFI_INPUT_KEY k; TT_FONT ttfont; EFI_EVENT events[3]; UINTN evn=0,which=0; POINTER_IMAGE ptr_img; EFI_GRAPHICS_OUTPUT_BLT_PIXEL *ptr_bg=NULL; UINTN ptr_w=12,ptr_h=14; BOOLEAN ptr_bg_valid=FALSE; INTN px=200,py=140,ppx=-1,ppy=-1; UINT64 last_abs_x=0,last_abs_y=0; UINT32 last_abs_buttons=0; BOOLEAN prev_left=FALSE,need_redraw=TRUE;
+EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; RENDER_TARGET rt; EFI_GRAPHICS_OUTPUT_PROTOCOL *g=NULL; EFI_GUID gg=gEfiGraphicsOutputProtocolGuid; EFI_SIMPLE_POINTER_PROTOCOL *sp=NULL; EFI_GUID spg=EFI_SIMPLE_POINTER_PROTOCOL_GUID; EFI_ABSOLUTE_POINTER_PROTOCOL *ap=NULL; EFI_GUID apg=EFI_ABSOLUTE_POINTER_PROTOCOL_GUID; EFI_INPUT_KEY k; TT_FONT ttfont; EFI_EVENT events[3]; UINTN evn=0,which=0; POINTER_IMAGE ptr_img; EFI_GRAPHICS_OUTPUT_BLT_PIXEL *ptr_bg=NULL; UINTN ptr_w=12,ptr_h=14; BOOLEAN ptr_bg_valid=FALSE; INTN px=200,py=140,ppx=-1,ppy=-1; UINT64 last_abs_x=0,last_abs_y=0; UINT32 last_abs_buttons=0; BOOLEAN prev_left=FALSE,need_redraw=TRUE;
  EFI_GRAPHICS_OUTPUT_BLT_PIXEL desk={70,110,40,0},win={192,192,192,0},title={140,90,60,0},selc={255,220,40,0},ptr={0,0,255,0},btn={200,60,60,0},white={255,255,255,0};
  LAUNCHER_WINDOW wins[MAX_WINDOWS]; UINTN win_count=1; INTN active=0; UINTN i; BOOLEAN dragging=FALSE,resizing=FALSE; INTN drag_dx=0,drag_dy=0; UINTN resize_edge=0,ox=0,oy=0,ow=0,oh=0; BOOLEAN partial_redraw=FALSE; UINTN pr_old_x=0,pr_old_y=0,pr_old_w=0,pr_old_h=0,pr_new_x=0,pr_new_y=0,pr_new_w=0,pr_new_h=0;
- InitializeLib(ih,st); disable_uefi_watchdog(st); s=uefi_call_wrapper(st->BootServices->LocateProtocol,3,&gg,NULL,(VOID**)&g); if(EFI_ERROR(s)) return s; uefi_call_wrapper(st->BootServices->LocateProtocol,3,&spg,NULL,(VOID**)&sp); uefi_call_wrapper(st->BootServices->LocateProtocol,3,&apg,NULL,(VOID**)&ap);
+ InitializeLib(ih,st); disable_uefi_watchdog(st); ZeroMem(&rt,sizeof(rt)); s=uefi_call_wrapper(st->BootServices->LocateProtocol,3,&gg,NULL,(VOID**)&g); if(EFI_ERROR(s)) return s; rt.w=g->Mode->Info->HorizontalResolution; rt.h=g->Mode->Info->VerticalResolution; rt.buf=AllocatePool(rt.w*rt.h*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)); rt.use_backbuf=(rt.buf!=NULL)?TRUE:FALSE; uefi_call_wrapper(st->BootServices->LocateProtocol,3,&spg,NULL,(VOID**)&sp); uefi_call_wrapper(st->BootServices->LocateProtocol,3,&apg,NULL,(VOID**)&ap);
  load_tt_font(ih,st,&ttfont); load_pointer_png(ih,st,&ptr_img); if(ptr_img.ok){ ptr_w=ptr_img.w; ptr_h=ptr_img.h; } ptr_bg=AllocatePool(ptr_w*ptr_h*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)); if(ptr_bg==NULL){ ptr_w=12; ptr_h=14; }
  ZeroMem(wins,sizeof(wins)); wins[0].used=TRUE; StrCpy(wins[0].cwd,L"\\"); wins[0].w=(g->Mode->Info->HorizontalResolution*3)/4; wins[0].h=(g->Mode->Info->VerticalResolution*3)/4; wins[0].x=(g->Mode->Info->HorizontalResolution-wins[0].w)/2; wins[0].y=(g->Mode->Info->VerticalResolution-wins[0].h)/2; layout_window(&wins[0]); reload_window(ih,st,&wins[0]);
  events[evn++]=st->ConIn->WaitForKey; if(sp&&sp->WaitForInput) events[evn++]=sp->WaitForInput; if(ap&&ap->WaitForInput) events[evn++]=ap->WaitForInput;
- while(1){ if(ptr_bg_valid && ppx>=0 && ppy>=0){ uefi_call_wrapper(g->Blt,10,g,ptr_bg,EfiBltBufferToVideo,0,0,(UINTN)ppx,(UINTN)ppy,ptr_w,ptr_h,0); ptr_bg_valid=FALSE; } if(need_redraw){ UINTN widx; fill(g,0,0,g->Mode->Info->HorizontalResolution,g->Mode->Info->VerticalResolution,desk); for(widx=0;widx<win_count;widx++) draw_window(g,&ttfont,&wins[widx],win,title,selc,btn,white); need_redraw=FALSE; partial_redraw=FALSE; ptr_bg_valid=FALSE; }
- else if(partial_redraw){ UINTN widx,ix=0,iy=0,iw=0,ih=0; BOOLEAN overlap=FALSE; if(rects_intersect(pr_old_x,pr_old_y,pr_old_w,pr_old_h,pr_new_x,pr_new_y,pr_new_w,pr_new_h)){ UINTN ox2=pr_old_x+pr_old_w, oy2=pr_old_y+pr_old_h, nx2=pr_new_x+pr_new_w, ny2=pr_new_y+pr_new_h; ix=(pr_old_x>pr_new_x)?pr_old_x:pr_new_x; iy=(pr_old_y>pr_new_y)?pr_old_y:pr_new_y; { UINTN ex=(ox2<nx2)?ox2:nx2, ey=(oy2<ny2)?oy2:ny2; iw=(ex>ix)?(ex-ix):0; ih=(ey>iy)?(ey-iy):0; overlap=(iw>0&&ih>0); } } if(overlap){ if(iy>pr_old_y) fill(g,pr_old_x,pr_old_y,pr_old_w,iy-pr_old_y,desk); if(pr_old_y+pr_old_h>iy+ih) fill(g,pr_old_x,iy+ih,pr_old_w,(pr_old_y+pr_old_h)-(iy+ih),desk); if(ix>pr_old_x) fill(g,pr_old_x,iy,ix-pr_old_x,ih,desk); if(pr_old_x+pr_old_w>ix+iw) fill(g,ix+iw,iy,(pr_old_x+pr_old_w)-(ix+iw),ih,desk); } else fill(g,pr_old_x,pr_old_y,pr_old_w,pr_old_h,desk); for(widx=0;widx<win_count;widx++){ LAUNCHER_WINDOW *w=&wins[widx]; if(rects_intersect(pr_old_x,pr_old_y,pr_old_w,pr_old_h,w->x,w->y,w->w,w->h) || rects_intersect(pr_new_x,pr_new_y,pr_new_w,pr_new_h,w->x,w->y,w->w,w->h)) draw_window(g,&ttfont,w,win,title,selc,btn,white);} partial_redraw=FALSE; ptr_bg_valid=FALSE; }
+ while(1){ if(ptr_bg_valid && ppx>=0 && ppy>=0){ uefi_call_wrapper(g->Blt,10,g,ptr_bg,EfiBltBufferToVideo,0,0,(UINTN)ppx,(UINTN)ppy,ptr_w,ptr_h,0); ptr_bg_valid=FALSE; } if(need_redraw){ UINTN widx; fill(&rt,g,0,0,g->Mode->Info->HorizontalResolution,g->Mode->Info->VerticalResolution,desk); for(widx=0;widx<win_count;widx++) draw_window(&rt,g,&ttfont,&wins[widx],win,title,selc,btn,white); need_redraw=FALSE; partial_redraw=FALSE; ptr_bg_valid=FALSE; if(rt.use_backbuf) uefi_call_wrapper(g->Blt,10,g,rt.buf,EfiBltBufferToVideo,0,0,0,0,rt.w,rt.h,0); }
+ else if(partial_redraw){ UINTN widx,ix=0,iy=0,iw=0,ih=0; BOOLEAN overlap=FALSE; if(rects_intersect(pr_old_x,pr_old_y,pr_old_w,pr_old_h,pr_new_x,pr_new_y,pr_new_w,pr_new_h)){ UINTN ox2=pr_old_x+pr_old_w, oy2=pr_old_y+pr_old_h, nx2=pr_new_x+pr_new_w, ny2=pr_new_y+pr_new_h; ix=(pr_old_x>pr_new_x)?pr_old_x:pr_new_x; iy=(pr_old_y>pr_new_y)?pr_old_y:pr_new_y; { UINTN ex=(ox2<nx2)?ox2:nx2, ey=(oy2<ny2)?oy2:ny2; iw=(ex>ix)?(ex-ix):0; ih=(ey>iy)?(ey-iy):0; overlap=(iw>0&&ih>0); } } if(overlap){ if(iy>pr_old_y) fill(&rt,g,pr_old_x,pr_old_y,pr_old_w,iy-pr_old_y,desk); if(pr_old_y+pr_old_h>iy+ih) fill(&rt,g,pr_old_x,iy+ih,pr_old_w,(pr_old_y+pr_old_h)-(iy+ih),desk); if(ix>pr_old_x) fill(&rt,g,pr_old_x,iy,ix-pr_old_x,ih,desk); if(pr_old_x+pr_old_w>ix+iw) fill(&rt,g,ix+iw,iy,(pr_old_x+pr_old_w)-(ix+iw),ih,desk); } else fill(&rt,g,pr_old_x,pr_old_y,pr_old_w,pr_old_h,desk); for(widx=0;widx<win_count;widx++){ LAUNCHER_WINDOW *w=&wins[widx]; if(rects_intersect(pr_old_x,pr_old_y,pr_old_w,pr_old_h,w->x,w->y,w->w,w->h) || rects_intersect(pr_new_x,pr_new_y,pr_new_w,pr_new_h,w->x,w->y,w->w,w->h)) draw_window(&rt,g,&ttfont,w,win,title,selc,btn,white);} partial_redraw=FALSE; ptr_bg_valid=FALSE; if(rt.use_backbuf) uefi_call_wrapper(g->Blt,10,g,rt.buf,EfiBltBufferToVideo,0,0,0,0,rt.w,rt.h,0); }
  if(px>=0&&py>=0&&(UINTN)px+ptr_w<g->Mode->Info->HorizontalResolution&&(UINTN)py+ptr_h<g->Mode->Info->VerticalResolution){ if(ptr_bg){ uefi_call_wrapper(g->Blt,10,g,ptr_bg,EfiBltVideoToBltBuffer,(UINTN)px,(UINTN)py,0,0,ptr_w,ptr_h,0); ptr_bg_valid=TRUE; } }
- if(ptr_img.ok&&ptr_bg) blit_pointer_alpha(g,&ptr_img,ptr_bg,(UINTN)px,(UINTN)py); else { fill(g,px,py,2,14,ptr); fill(g,px,py,10,2,ptr);} ppx=px; ppy=py;
+ if(ptr_img.ok&&ptr_bg) blit_pointer_alpha(g,&ptr_img,ptr_bg,(UINTN)px,(UINTN)py); else { fill(&rt,g,px,py,2,14,ptr); fill(&rt,g,px,py,10,2,ptr);} ppx=px; ppy=py;
  s=uefi_call_wrapper(st->BootServices->WaitForEvent,3,evn,events,&which); if(EFI_ERROR(s)) break; if(which==0 && !EFI_ERROR(uefi_call_wrapper(st->ConIn->ReadKeyStroke,2,st->ConIn,&k))) break;
  { EFI_SIMPLE_POINTER_STATE ps; ZeroMem(&ps,sizeof(ps)); if(ap){ EFI_ABSOLUTE_POINTER_STATE as; if(!EFI_ERROR(uefi_call_wrapper(ap->GetState,2,ap,&as))){ UINT64 minx=ap->Mode->AbsoluteMinX,maxx=ap->Mode->AbsoluteMaxX,miny=ap->Mode->AbsoluteMinY,maxy=ap->Mode->AbsoluteMaxY,rx=(maxx>minx)?(maxx-minx):1,ry=(maxy>miny)?(maxy-miny):1; UINT64 ox2=(as.CurrentX>minx)?(as.CurrentX-minx):0,oy2=(as.CurrentY>miny)?(as.CurrentY-miny):0; px=(INTN)((ox2*(g->Mode->Info->HorizontalResolution-1))/rx); py=(INTN)((oy2*(g->Mode->Info->VerticalResolution-1))/ry); if(as.ActiveButtons&EFI_ABSP_TouchActive) ps.LeftButton=1; last_abs_x=as.CurrentX; last_abs_y=as.CurrentY; last_abs_buttons=as.ActiveButtons; } }
  if(sp && !EFI_ERROR(uefi_call_wrapper(sp->GetState,2,sp,&ps))){ INTN scale_x=1024,scale_y=1024,step_x,step_y; if(sp->Mode!=NULL){ if(sp->Mode->ResolutionX>0) scale_x=(INTN)(sp->Mode->ResolutionX/64); if(sp->Mode->ResolutionY>0) scale_y=(INTN)(sp->Mode->ResolutionY/64);} if(scale_x<1)scale_x=1; if(scale_y<1)scale_y=1; step_x=(INTN)(ps.RelativeMovementX/scale_x); step_y=(INTN)(ps.RelativeMovementY/scale_y); if(step_x==0 && ps.RelativeMovementX!=0) step_x=(ps.RelativeMovementX>0)?1:-1; if(step_y==0 && ps.RelativeMovementY!=0) step_y=(ps.RelativeMovementY>0)?1:-1; px += step_x; py += step_y; if(px<0)px=0; if(py<0)py=0; }
@@ -346,5 +361,5 @@ EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; EFI_GRAP
  if(ps.LeftButton && resizing && active>=0 && resize_edge){ LAUNCHER_WINDOW *w=&wins[active]; UINTN ox0=w->x,oy0=w->y,ow0=w->w,oh0=w->h; INTN nw=(INTN)ow + (px-(INTN)(ox+ow-1)); INTN nh=(INTN)oh + (py-(INTN)(oy+oh-1)); if(nw<(INTN)MIN_W) nw=MIN_W; if(nh<(INTN)MIN_H) nh=MIN_H; if((UINTN)w->x+(UINTN)nw>g->Mode->Info->HorizontalResolution) nw=(INTN)(g->Mode->Info->HorizontalResolution-w->x); if((UINTN)w->y+(UINTN)nh>g->Mode->Info->VerticalResolution) nh=(INTN)(g->Mode->Info->VerticalResolution-w->y); if((UINTN)nw!=w->w || (UINTN)nh!=w->h){ pr_old_x=ox0; pr_old_y=oy0; pr_old_w=ow0; pr_old_h=oh0; w->w=(UINTN)nw; w->h=(UINTN)nh; layout_window(w); pr_new_x=w->x; pr_new_y=w->y; pr_new_w=w->w; pr_new_h=w->h; partial_redraw=TRUE; } }
  prev_left=ps.LeftButton?TRUE:FALSE; }
  }
- for(i=0;i<win_count;i++) free_window_icons(st,&wins[i]); if(ttfont.data) uefi_call_wrapper(st->BootServices->FreePool,1,ttfont.data); if(ptr_bg) FreePool(ptr_bg); if(ptr_img.px) FreePool(ptr_img.px); return EFI_SUCCESS;
+ for(i=0;i<win_count;i++) free_window_icons(st,&wins[i]); if(rt.buf) FreePool(rt.buf); if(ttfont.data) uefi_call_wrapper(st->BootServices->FreePool,1,ttfont.data); if(ptr_bg) FreePool(ptr_bg); if(ptr_img.px) FreePool(ptr_img.px); return EFI_SUCCESS;
 }
