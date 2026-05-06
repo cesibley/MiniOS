@@ -272,6 +272,19 @@ static INTN is_path_sep(CHAR16 c) {
     return c == L'\\' || c == L'/';
 }
 
+static VOID normalize_path_inplace(CHAR16 *path) {
+    UINTN i = 0;
+    if (path == NULL || path[0] == 0) return;
+    while (path[i] != 0) {
+        if (path[i] == L'/') path[i] = L'\\';
+        i++;
+    }
+    if (path[0] != L'\\') {
+        for (i = StrLen(path); i > 0; i--) path[i] = path[i - 1];
+        path[0] = L'\\';
+    }
+}
+
 static CHAR16 *path_basename(CHAR16 *path) {
     CHAR16 *base = path;
     while (*path) {
@@ -682,6 +695,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     Print(L"VIEW (UEFI)\r\n");
     parse_args(ImageHandle, SystemTable, &force_hex, path, INPUT_MAX);
+    normalize_path_inplace(path);
     if (path[0] == 0) {
         Print(L"Usage: VIEW.EFI [-h] <file>\r\n");
         wait_for_f10(SystemTable, L"Press F10 to exit...");
