@@ -68,10 +68,16 @@ static BOOLEAN str_eq_ci16(CHAR16 *a, CHAR16 *b) {
     return (*a == 0 && *b == 0);
 }
 
-static VOID normalize_path_seps(CHAR16 *path) {
-    while (path != NULL && *path) {
-        if (*path == L'/') *path = L'\\';
-        path++;
+static VOID normalize_path_inplace(CHAR16 *path) {
+    UINTN i = 0;
+    if (path == NULL || path[0] == 0) return;
+    while (path[i] != 0) {
+        if (path[i] == L'/') path[i] = L'\\';
+        i++;
+    }
+    if (path[0] != L'\\') {
+        for (i = StrLen(path); i > 0; i--) path[i] = path[i - 1];
+        path[0] = L'\\';
     }
 }
 
@@ -264,7 +270,7 @@ static EFI_STATUS parse_args(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTab
     } else {
         StrCpy(args->file_path, token);
     }
-    normalize_path_seps(args->file_path);
+    normalize_path_inplace(args->file_path);
 
     return EFI_SUCCESS;
 }

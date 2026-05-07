@@ -645,6 +645,19 @@ static INTN is_path_sep(CHAR16 c) {
     return c == L'\\' || c == L'/';
 }
 
+static VOID normalize_path_inplace(CHAR16 *path) {
+    UINTN i = 0;
+    if (path == NULL || path[0] == 0) return;
+    while (path[i] != 0) {
+        if (path[i] == L'/') path[i] = L'\\';
+        i++;
+    }
+    if (path[0] != L'\\') {
+        for (i = StrLen(path); i > 0; i--) path[i] = path[i - 1];
+        path[0] = L'\\';
+    }
+}
+
 static VOID path_dirname(CHAR16 *path, CHAR16 *out, UINTN out_len) {
     UINTN len;
     INTN slash_pos = -1;
@@ -985,6 +998,7 @@ static VOID parse_load_options_path(editor_t *ed) {
     }
 
     ed->path[out] = 0;
+    normalize_path_inplace(ed->path);
 }
 
 EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {

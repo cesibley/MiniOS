@@ -1497,6 +1497,23 @@ static VOID shell_run_file(CHAR16 *path, CHAR16 *load_options, EFI_HANDLE ImageH
     status = uefi_call_wrapper(SystemTable->BootServices->LoadImage, 6,
                                FALSE, ImageHandle, file_path, NULL, 0, &new_image);
     if (EFI_ERROR(status)) {
+        CHAR16 *prog_name = path_basename(path);
+        CHAR16 root_path[INPUT_MAX];
+        if (prog_name != NULL && *prog_name != 0) {
+            SPrint(root_path, sizeof(root_path), L"\\%s", prog_name);
+            if (StrCmp(path, root_path) != 0) {
+                file_path = FileDevicePath(loaded_image->DeviceHandle, root_path);
+                if (file_path != NULL) {
+                    status = uefi_call_wrapper(SystemTable->BootServices->LoadImage, 6,
+                                               FALSE, ImageHandle, file_path, NULL, 0, &new_image);
+                    if (!EFI_ERROR(status)) {
+                        path = root_path;
+                    }
+                }
+            }
+        }
+    }
+    if (EFI_ERROR(status)) {
         Print(L"\r\nLoadImage failed for '%s': %r", path, status);
         goto cleanup;
     }
