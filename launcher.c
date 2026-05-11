@@ -117,21 +117,42 @@ static EFI_STATUS save_screenshot_bmp(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, EFI_G
 static BOOLEAN invalid_name_char(CHAR16 c){ return (c==L'\\'||c==L'/'||c==L':'||c==L'*'||c==L'?'||c==L'\"'||c==L'<'||c==L'>'||c==L'|'); }
 static BOOLEAN valid_rename_name(CHAR16 *n){ UINTN i=0; if(n==NULL||n[0]==0) return FALSE; while(n[i]){ if(invalid_name_char(n[i])) return FALSE; i++; } return TRUE; }
 
-static EFI_STATUS delete_selected_with_meta(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *cwd, CHAR16 *name){
-    EFI_FILE_HANDLE root,dir,item,meta;
+static EFI_STATUS delete_path_recursive(EFI_FILE_HANDLE root, CHAR16 *path){
+    EFI_FILE_HANDLE h;
     EFI_STATUS s;
-    CHAR16 mp[320];
+    UINT8 entbuf[512];
+    UINTN bsz;
+    EFI_FILE_INFO *fi=(EFI_FILE_INFO*)entbuf;
+    s=uefi_call_wrapper(root->Open,5,root,&h,path,EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE,0);
+    if(EFI_ERROR(s)) return s;
+    bsz=sizeof(entbuf);
+    s=uefi_call_wrapper(h->GetInfo,4,h,&GenericFileInfo,&bsz,fi);
+    if(EFI_ERROR(s)){ uefi_call_wrapper(h->Close,1,h); return s; }
+    if((fi->Attribute&EFI_FILE_DIRECTORY)!=0){
+        while(1){
+            bsz=sizeof(entbuf);
+            s=uefi_call_wrapper(h->Read,3,h,&bsz,fi);
+            if(EFI_ERROR(s)){ uefi_call_wrapper(h->Close,1,h); return s; }
+            if(bsz==0) break;
+            if(StrCmp(fi->FileName,L".")==0 || StrCmp(fi->FileName,L"..")==0) continue;
+            { CHAR16 cp[360]; join_path(cp,sizeof(cp),path,fi->FileName); s=delete_path_recursive(root,cp); if(EFI_ERROR(s)){ uefi_call_wrapper(h->Close,1,h); return s; } }
+        }
+    }
+    s=uefi_call_wrapper(h->Delete,1,h);
+    return s;
+}
+
+static EFI_STATUS delete_selected_with_meta(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *cwd, CHAR16 *name){
+    EFI_FILE_HANDLE root,meta;
+    EFI_STATUS s;
+    CHAR16 mp[320],path[320];
     s=open_root(ih,st,&root); if(EFI_ERROR(s)) return s;
-    s=uefi_call_wrapper(root->Open,5,root,&dir,cwd,EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE,0);
+    join_path(path,sizeof(path),cwd,name);
+    s=delete_path_recursive(root,path);
     if(EFI_ERROR(s)){ uefi_call_wrapper(root->Close,1,root); return s; }
-    s=uefi_call_wrapper(dir->Open,5,dir,&item,name,EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE,0);
-    if(EFI_ERROR(s)){ uefi_call_wrapper(dir->Close,1,dir); uefi_call_wrapper(root->Close,1,root); return s; }
-    s=uefi_call_wrapper(item->Delete,1,item);
-    if(EFI_ERROR(s)){ uefi_call_wrapper(dir->Close,1,dir); uefi_call_wrapper(root->Close,1,root); return s; }
     make_meta_path_in_dir(mp,sizeof(mp),cwd,name);
     s=uefi_call_wrapper(root->Open,5,root,&meta,mp,EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE,0);
     if(!EFI_ERROR(s)) uefi_call_wrapper(meta->Delete,1,meta);
-    uefi_call_wrapper(dir->Close,1,dir);
     uefi_call_wrapper(root->Close,1,root);
     return EFI_SUCCESS;
 }
@@ -208,6 +229,45 @@ static EFI_STATUS copy_file_with_meta(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR1
     (void)ensure_meta_dir(root,dst_cwd);
     (void)copy_path_file(root,sm,dm);
     uefi_call_wrapper(root->Close,1,root); return EFI_SUCCESS;
+}
+
+static BOOLEAN name_exists_in_dir(EFI_FILE_HANDLE root, CHAR16 *dir, CHAR16 *name){
+    EFI_FILE_HANDLE f; EFI_STATUS s; CHAR16 p[300];
+    join_path(p,sizeof(p),dir,name);
+    s=uefi_call_wrapper(root->Open,5,root,&f,p,EFI_FILE_MODE_READ,0);
+    if(EFI_ERROR(s)) return FALSE;
+    uefi_call_wrapper(f->Close,1,f);
+    return TRUE;
+}
+
+static VOID build_new_item_name(CHAR16 *out, UINTN out_sz, CHAR16 *base, UINTN idx){
+    if(idx<=1) SPrint(out,out_sz,L"%s",base);
+    else SPrint(out,out_sz,L"%s (%u)",base,idx);
+}
+
+static EFI_STATUS create_item_with_meta(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *cwd, BOOLEAN make_dir, CHAR16 *created_name, UINTN created_name_sz){
+    EFI_FILE_HANDLE root,item,mf; EFI_STATUS s; UINTN idx=1;
+    CHAR16 name[LAUNCHER_NAME_MAX],path[300],meta_path[320];
+    CHAR8 meta_txt[]="TYPE: File\n";
+    if(created_name && created_name_sz>0) created_name[0]=0;
+    s=open_root(ih,st,&root); if(EFI_ERROR(s)) return s;
+    while(idx<10000){
+        build_new_item_name(name,sizeof(name),make_dir?L"New Folder":L"New File",idx);
+        if(!name_exists_in_dir(root,cwd,name)) break;
+        idx++;
+    }
+    if(idx>=10000){ uefi_call_wrapper(root->Close,1,root); return EFI_OUT_OF_RESOURCES; }
+    join_path(path,sizeof(path),cwd,name);
+    s=uefi_call_wrapper(root->Open,5,root,&item,path,EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE|EFI_FILE_MODE_CREATE, make_dir?EFI_FILE_DIRECTORY:0);
+    if(EFI_ERROR(s)){ uefi_call_wrapper(root->Close,1,root); return s; }
+    uefi_call_wrapper(item->Close,1,item);
+    (void)ensure_meta_dir(root,cwd);
+    make_meta_path_in_dir(meta_path,sizeof(meta_path),cwd,name);
+    s=uefi_call_wrapper(root->Open,5,root,&mf,meta_path,EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE|EFI_FILE_MODE_CREATE,0);
+    if(!EFI_ERROR(s)){ UINTN bsz=sizeof(meta_txt)-1; (void)uefi_call_wrapper(mf->Write,3,mf,&bsz,meta_txt); uefi_call_wrapper(mf->Close,1,mf); }
+    uefi_call_wrapper(root->Close,1,root);
+    if(created_name && created_name_sz>0){ StrnCpy(created_name,name,(created_name_sz/sizeof(CHAR16))-1); created_name[(created_name_sz/sizeof(CHAR16))-1]=0; }
+    return EFI_SUCCESS;
 }
 static EFI_STATUS open_root(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, EFI_FILE_HANDLE *root){ EFI_LOADED_IMAGE *li; EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs; EFI_STATUS s; s=uefi_call_wrapper(st->BootServices->HandleProtocol,3,ih,&LoadedImageProtocol,(VOID**)&li); if(EFI_ERROR(s)) return s; s=uefi_call_wrapper(st->BootServices->HandleProtocol,3,li->DeviceHandle,&FileSystemProtocol,(VOID**)&fs); if(EFI_ERROR(s)) return s; return uefi_call_wrapper(fs->OpenVolume,2,fs,root);} 
 
@@ -541,6 +601,7 @@ typedef struct {
     ITEM items[MAX_ITEMS];
     ICON_IMAGE icons[MAX_ITEMS];
     UINTN count,scroll,sel,last_sel,last_click_ms;
+    UINTN last_empty_left_ms,last_empty_right_ms;
     UINTN x,y,w,h,content_y,content_h,cols,rows,visible_rows,max_scroll;
 } LAUNCHER_WINDOW;
 static BOOLEAN rects_intersect(UINTN ax,UINTN ay,UINTN aw,UINTN ah,UINTN bx,UINTN by,UINTN bw,UINTN bh){ return !(ax+aw<=bx || bx+bw<=ax || ay+ah<=by || by+bh<=ay); }
@@ -635,6 +696,31 @@ EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; RENDER_T
  }
  if(have_ms) w->last_click_ms=ms;
  w->last_sel=hit; pr_old_x=w->x; pr_old_y=w->y; pr_old_w=w->w; pr_old_h=w->h; pr_new_x=w->x; pr_new_y=w->y; pr_new_w=w->w; pr_new_h=w->h; partial_redraw=TRUE; }
+ else if(py>=(INTN)w->content_y && py<(INTN)(w->y+w->h-2) && px>=(INTN)(w->x+2) && px<(INTN)(w->x+w->w-RESIZE_GRAB_PX) && px<(INTN)(w->x+w->w-14)){
+     if(!EFI_ERROR(uefi_call_wrapper(st->RuntimeServices->GetTime,2,&t,NULL))){
+         CHAR16 created[LAUNCHER_NAME_MAX]; EFI_STATUS cs;
+         ms=(UINTN)((((UINTN)t.Minute*60u)+(UINTN)t.Second)*1000u) + (UINTN)(t.Nanosecond/1000000u);
+         have_ms=TRUE;
+         if(ps.LeftButton && !ps.RightButton){
+             if(ms-w->last_empty_left_ms<450){
+                 cs=create_item_with_meta(ih,st,w->cwd,FALSE,created,sizeof(created));
+                 if(!EFI_ERROR(cs)){ UINTN ni; reload_window(ih,st,w); for(ni=0;ni<w->count;ni++) if(StrCmp(w->items[ni].name,created)==0){ w->sel=ni; break; } StrCpy(toast,L"New file created"); }
+                 else StrCpy(toast,L"New file failed");
+                 toast_ticks=120; need_redraw=TRUE;
+                 w->last_empty_left_ms=0;
+             } else w->last_empty_left_ms=ms;
+         } else if(ps.RightButton && !ps.LeftButton){
+             if(ms-w->last_empty_right_ms<450){
+                 cs=create_item_with_meta(ih,st,w->cwd,TRUE,created,sizeof(created));
+                 if(!EFI_ERROR(cs)){ UINTN ni; reload_window(ih,st,w); for(ni=0;ni<w->count;ni++) if(StrCmp(w->items[ni].name,created)==0){ w->sel=ni; break; } StrCpy(toast,L"New folder created"); }
+                 else StrCpy(toast,L"New folder failed");
+                 toast_ticks=120; need_redraw=TRUE;
+                 w->last_empty_right_ms=0;
+             } else w->last_empty_right_ms=ms;
+         }
+         w->last_sel=(UINTN)-1;
+     }
+ }
  }
  break; } } }
  if((!ps.LeftButton && !ps.RightButton) || (ps.LeftButton && ps.RightButton)){
