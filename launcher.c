@@ -86,6 +86,8 @@ static EFI_STATUS ensure_meta_dir(EFI_FILE_HANDLE root, CHAR16 *dir){
 #define SCAN_PRINT 0x63
 #endif
 static EFI_STATUS open_root(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, EFI_FILE_HANDLE *root);
+static BOOLEAN name_exists_in_dir(EFI_FILE_HANDLE root, CHAR16 *dir, CHAR16 *name);
+static VOID build_copy_item_name(CHAR16 *out, UINTN out_sz, CHAR16 *base, UINTN idx);
 static EFI_STATUS save_screenshot_bmp(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, EFI_GRAPHICS_OUTPUT_PROTOCOL *g){
     EFI_FILE_HANDLE root,f,mf; EFI_STATUS s; CHAR16 name[64]=L"\\screenshot", meta_path[128];
     UINTN w=g->Mode->Info->HorizontalResolution,h=g->Mode->Info->VerticalResolution,row,col,pixsz=w*h*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
@@ -218,14 +220,19 @@ static EFI_STATUS copy_path_file(EFI_FILE_HANDLE root, CHAR16 *src_path, CHAR16 
     uefi_call_wrapper(dst->Close,1,dst); return EFI_SUCCESS;
 }
 static EFI_STATUS copy_file_with_meta(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *src_cwd, CHAR16 *name, CHAR16 *dst_cwd){
-    EFI_FILE_HANDLE root; EFI_STATUS s; CHAR16 src_path[320],dst_path[320],sm[360],dm[360];
-    if(StrCmp(src_cwd,dst_cwd)==0) return EFI_ALREADY_STARTED;
+    EFI_FILE_HANDLE root; EFI_STATUS s; CHAR16 src_path[320],dst_path[320],sm[360],dm[360],dst_name[LAUNCHER_NAME_MAX]; UINTN idx=1;
     join_path(src_path,sizeof(src_path),src_cwd,name);
-    join_path(dst_path,sizeof(dst_path),dst_cwd,name);
     s=open_root(ih,st,&root); if(EFI_ERROR(s)) return s;
+    while(idx<10000){
+        build_copy_item_name(dst_name,sizeof(dst_name),name,idx);
+        if(!name_exists_in_dir(root,dst_cwd,dst_name)) break;
+        idx++;
+    }
+    if(idx>=10000){ uefi_call_wrapper(root->Close,1,root); return EFI_OUT_OF_RESOURCES; }
+    join_path(dst_path,sizeof(dst_path),dst_cwd,dst_name);
     s=copy_path_file(root,src_path,dst_path);
     if(EFI_ERROR(s)){ uefi_call_wrapper(root->Close,1,root); return s; }
-    make_meta_path_in_dir(sm,sizeof(sm),src_cwd,name); make_meta_path_in_dir(dm,sizeof(dm),dst_cwd,name);
+    make_meta_path_in_dir(sm,sizeof(sm),src_cwd,name); make_meta_path_in_dir(dm,sizeof(dm),dst_cwd,dst_name);
     (void)ensure_meta_dir(root,dst_cwd);
     (void)copy_path_file(root,sm,dm);
     uefi_call_wrapper(root->Close,1,root); return EFI_SUCCESS;
@@ -243,6 +250,20 @@ static BOOLEAN name_exists_in_dir(EFI_FILE_HANDLE root, CHAR16 *dir, CHAR16 *nam
 static VOID build_new_item_name(CHAR16 *out, UINTN out_sz, CHAR16 *base, UINTN idx){
     if(idx<=1) SPrint(out,out_sz,L"%s",base);
     else SPrint(out,out_sz,L"%s (%u)",base,idx);
+}
+
+static VOID build_copy_item_name(CHAR16 *out, UINTN out_sz, CHAR16 *base, UINTN idx){
+    if(idx<=1) SPrint(out,out_sz,L"%s",base);
+    else SPrint(out,out_sz,L"%s (%u)",base,idx-1);
+}
+
+static VOID make_unix_display_path(CHAR16 *out, UINTN out_len, CHAR16 *path){
+    UINTN i;
+    if(out_len==0) return;
+    if(path==NULL || path[0]==0){ out[0]=0; return; }
+    if(StrCmp(path,L"\\")==0){ StrnCpy(out,L"/",out_len-1); out[out_len-1]=0; return; }
+    for(i=0; path[i] && i+1<out_len; i++) out[i]=(path[i]==L'\\')?L'/':path[i];
+    out[i]=0;
 }
 
 static EFI_STATUS create_item_with_meta(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st, CHAR16 *cwd, BOOLEAN make_dir, CHAR16 *created_name, UINTN created_name_sz){
@@ -607,7 +628,7 @@ typedef struct {
 static BOOLEAN rects_intersect(UINTN ax,UINTN ay,UINTN aw,UINTN ah,UINTN bx,UINTN by,UINTN bw,UINTN bh){ return !(ax+aw<=bx || bx+bw<=ax || ay+ah<=by || by+bh<=ay); }
 static VOID draw_window(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, TT_FONT *ttfont, LAUNCHER_WINDOW *w, ICON_IMAGE *close_img, BOOLEAN show_close, EFI_GRAPHICS_OUTPUT_BLT_PIXEL win, EFI_GRAPHICS_OUTPUT_BLT_PIXEL title, EFI_GRAPHICS_OUTPUT_BLT_PIXEL selc, EFI_GRAPHICS_OUTPUT_BLT_PIXEL btn, EFI_GRAPHICS_OUTPUT_BLT_PIXEL white, BOOLEAN rename_mode, CHAR16 *rename_buf, UINTN rename_cursor, BOOLEAN meta_popup, INTN popup_x, INTN popup_y, CHAR16 *popup_text, BOOLEAN drag_target, BOOLEAN hide_drag_item, UINTN drag_item_idx, UINTN folder_target_idx){
     UINTN start=w->scroll*w->cols,end=start+w->visible_rows*w->cols,j; if(end>w->count) end=w->count;
-    fill(rt,g,w->x,w->y,w->w,w->h,win); fill(rt,g,w->x,w->y,w->w,30,title); { CHAR16 ttl[80]; SPrint(ttl,sizeof(ttl),L"Launcher - %s",w->cwd); draw_tt_text(rt,g,ttfont,ttl,(int)(w->x+12),(int)(w->y+7),white,title);} if(show_close){ fill(rt,g,w->x+w->w-22,w->y+7,12,12,btn); if(close_img&&close_img->ok) blit_icon_alpha_scaled(rt,g,close_img,w->x+w->w-22,w->y+7,12,12,btn); else draw_tt_text(rt,g,ttfont,L"X",(int)(w->x+w->w-19),(int)(w->y+6),white,btn); }
+    fill(rt,g,w->x,w->y,w->w,w->h,win); fill(rt,g,w->x,w->y,w->w,30,title); { CHAR16 ttl[96],cwd_disp[256]; make_unix_display_path(cwd_disp,sizeof(cwd_disp)/sizeof(CHAR16),w->cwd); SPrint(ttl,sizeof(ttl),L"Launcher - %s",cwd_disp); draw_tt_text(rt,g,ttfont,ttl,(int)(w->x+12),(int)(w->y+7),white,title);} if(show_close){ fill(rt,g,w->x+w->w-22,w->y+7,12,12,btn); if(close_img&&close_img->ok) blit_icon_alpha_scaled(rt,g,close_img,w->x+w->w-22,w->y+7,12,12,btn); else draw_tt_text(rt,g,ttfont,L"X",(int)(w->x+w->w-19),(int)(w->y+6),white,btn); }
     for(j=start;j<end;j++){ if(hide_drag_item && j==drag_item_idx) continue; draw_item_cell(rt,g,ttfont,w->items,w->icons,j,start,w->cols,w->x,90,26,w->content_y,83,(j==w->sel),win,selc); }
     if(rename_mode && w->sel<w->count){ UINTN vi=w->sel-start; UINTN row=vi/w->cols,col=vi%w->cols; if(w->sel>=start && w->sel<end){ UINTN x=w->x+12+col*90+26/2, y=w->content_y+row*83+ICON_PX+4; EFI_GRAPHICS_OUTPUT_BLT_PIXEL box={255,255,255,0},txt={0,0,0,0}; CHAR16 left[LAUNCHER_NAME_MAX],rb[LAUNCHER_NAME_MAX+2]; UINTN len=StrLen(rename_buf),cw; if(rename_cursor>len) rename_cursor=len; StrnCpy(left,rename_buf,rename_cursor); left[rename_cursor]=0; cw=tt_text_width(ttfont,left); StrCpy(rb,rename_buf); if(len+1<LAUNCHER_NAME_MAX+2){ rb[len]=L' '; rb[len+1]=0; } fill(rt,g,x-1,y-1,ICON_PX+2,18,box); draw_tt_text(rt,g,ttfont,rb,(int)x,(int)y,txt,box); fill(rt,g,x+cw,y,1,16,txt);} }
     { EFI_GRAPHICS_OUTPUT_BLT_PIXEL grip={96,96,96,0}; fill(rt,g,w->x+w->w-12,w->y+w->h-4,8,1,grip); fill(rt,g,w->x+w->w-9,w->y+w->h-7,5,1,grip); fill(rt,g,w->x+w->w-6,w->y+w->h-10,2,1,grip); }
@@ -745,7 +766,7 @@ EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; RENDER_T
                         join_path(target_dir,sizeof(target_dir),dw->cwd,dw->items[drag_hover_item].name);
                     }
                     ms2=drag_copy?copy_file_with_meta(ih,st,sw->cwd,sw->items[drag_item].name,target_dir):move_selected_with_meta(ih,st,sw->cwd,sw->items[drag_item].name,target_dir);
-                } else if((UINTN)drag_src_win!=(UINTN)dwi){
+                } else if(drag_copy || (UINTN)drag_src_win!=(UINTN)dwi){
                     ms2=drag_copy?copy_file_with_meta(ih,st,sw->cwd,sw->items[drag_item].name,dw->cwd):move_selected_with_meta(ih,st,sw->cwd,sw->items[drag_item].name,dw->cwd);
                 }
              }
