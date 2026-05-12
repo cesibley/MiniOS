@@ -713,7 +713,8 @@ EFI_STATUS efi_main(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st){ EFI_STATUS s; RENDER_T
          CHAR16 lines[6][96]; ZeroMem(lines,sizeof(lines));
          while(li<6 && meta_popup_text[pos]){ pos=meta_preview_line(meta_popup_text,pos,lines[li],96); if(lines[li][0]){ UINTN tw=tt_text_width(&ttfont,lines[li]); if(tw>maxw) maxw=tw; } li++; }
          pw=maxw+12; if(pw<120) pw=120; ph=li*16+16; if(ph<40) ph=40;
-         if(px2+pw>rt.w) px2=(rt.w>pw)?(rt.w-pw):0; if(py2+ph>rt.h) py2=(rt.h>ph)?(rt.h-ph):0;
+         if(px2+pw>rt.w) px2=(rt.w>pw)?(rt.w-pw):0;
+         if(py2+ph>rt.h) py2=(rt.h>ph)?(rt.h-ph):0;
          if(px>=(INTN)px2&&px<(INTN)(px2+pw)&&py>=(INTN)py2&&py<(INTN)(py2+ph)){ meta_popup_pinned=TRUE; meta_popup_pin_armed=FALSE; }
      }
  }
