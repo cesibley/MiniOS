@@ -41,14 +41,9 @@ typedef struct {
     UINTN w;
     UINTN h;
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL *px;
-} ICON_IMAGE;
-
-typedef struct {
-    BOOLEAN ok;
-    UINTN w;
-    UINTN h;
-    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *px;
-} POINTER_IMAGE;
+} PIXEL_IMAGE;
+typedef PIXEL_IMAGE ICON_IMAGE;
+typedef PIXEL_IMAGE POINTER_IMAGE;
 
 typedef struct { BOOLEAN use_backbuf; EFI_GRAPHICS_OUTPUT_BLT_PIXEL *buf; UINTN w; UINTN h; } RENDER_TARGET;
 
@@ -65,10 +60,35 @@ static VOID rt_write(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, UINTN x
     else uefi_call_wrapper(g->Blt,10,g,in,EfiBltBufferToVideo,0,0,x,y,w,h,0);
 }
 
-static VOID fill(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, UINTN x, UINTN y, UINTN w, UINTN h, EFI_GRAPHICS_OUTPUT_BLT_PIXEL c){ UINTN row,col; if(!w||!h) return; if(rt&&rt->use_backbuf&&rt->buf){ for(row=0;row<h;row++) for(col=0;col<w;col++) rt->buf[(y+row)*rt->w+(x+col)]=c; } else uefi_call_wrapper(g->Blt,10,g,&c,EfiBltVideoFill,0,0,x,y,w,h,0);} 
-static BOOLEAN contains_ci(const CHAR8 *s, const CHAR8 *pat){ UINTN i,j; for(i=0;s&&s[i];i++){ for(j=0;pat[j]&&s[i+j];j++){ CHAR8 a=s[i+j],b=pat[j]; if(a>='a'&&a<='z')a-=32; if(b>='a'&&b<='z')b-=32; if(a!=b) break;} if(!pat[j]) return TRUE;} return FALSE; }
-static VOID join_path(CHAR16 *out, UINTN out_sz, CHAR16 *base, CHAR16 *name){ if(StrCmp(base,L"\\")==0) SPrint(out,out_sz,L"\\%s",name); else SPrint(out,out_sz,L"%s\\%s",base,name); }
-static VOID make_meta_path(CHAR16 *out, UINTN out_sz, CHAR16 *name){ SPrint(out,out_sz,L"\\.meta\\%s.meta",name); }
+static VOID fill(RENDER_TARGET *rt, EFI_GRAPHICS_OUTPUT_PROTOCOL *g, UINTN x, UINTN y, UINTN w, UINTN h, EFI_GRAPHICS_OUTPUT_BLT_PIXEL c){
+    UINTN row,col;
+    if(!w||!h) return;
+    if(rt&&rt->use_backbuf&&rt->buf){
+        for(row=0;row<h;row++) for(col=0;col<w;col++) rt->buf[(y+row)*rt->w+(x+col)]=c;
+    } else {
+        uefi_call_wrapper(g->Blt,10,g,&c,EfiBltVideoFill,0,0,x,y,w,h,0);
+    }
+}
+static BOOLEAN contains_ci(const CHAR8 *s, const CHAR8 *pat){
+    UINTN i,j;
+    for(i=0;s&&s[i];i++){
+        for(j=0;pat[j]&&s[i+j];j++){
+            CHAR8 a=s[i+j],b=pat[j];
+            if(a>='a'&&a<='z') a-=32;
+            if(b>='a'&&b<='z') b-=32;
+            if(a!=b) break;
+        }
+        if(!pat[j]) return TRUE;
+    }
+    return FALSE;
+}
+static VOID join_path(CHAR16 *out, UINTN out_sz, CHAR16 *base, CHAR16 *name){
+    if(StrCmp(base,L"\\")==0) SPrint(out,out_sz,L"\\%s",name);
+    else SPrint(out,out_sz,L"%s\\%s",base,name);
+}
+static VOID make_meta_path(CHAR16 *out, UINTN out_sz, CHAR16 *name){
+    SPrint(out,out_sz,L"\\.meta\\%s.meta",name);
+}
 static VOID make_meta_path_in_dir(CHAR16 *out, UINTN out_sz, CHAR16 *dir, CHAR16 *name){
     if(StrCmp(dir,L"\\")==0) SPrint(out,out_sz,L"\\.meta\\%s.meta",name);
     else SPrint(out,out_sz,L"%s\\.meta\\%s.meta",dir,name);
