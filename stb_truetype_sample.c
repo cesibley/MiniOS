@@ -24,7 +24,15 @@ static int tt_iceil(double x) {
 #define STBTT_malloc(sz, u) AllocatePool((UINTN)(sz))
 #define STBTT_free(p, u) FreePool((p))
 #define STB_TRUETYPE_IMPLEMENTATION
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
 #include "stb_truetype.h"
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static VOID clear_screen(EFI_SYSTEM_TABLE *SystemTable) {
     uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
@@ -246,4 +254,3 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     FreePool(font_data);
     return status;
 }
-
